@@ -1185,12 +1185,52 @@ static int unix_release(struct socket *sock)
 	return 0;
 }
 
+static struct sock *unix_find_bsd_path(struct path *path, int type, int flags)
+{
+	struct inode *inode;
+	struct sock *sk;
+	int err;
+
+	if (!(flags & SOCK_COREDUMP)) {
+		err = path_permission(path, MAY_WRITE);
+		if (err)
+			goto path_put;
+	}
+
+	err = -ECONNREFUSED;
+	inode = d_backing_inode(path->dentry);
+	if (!S_ISSOCK(inode->i_mode))
+		goto path_put;
+
+	sk = unix_find_socket_byinode(inode);
+	if (!sk)
+		goto path_put;
+
+	err = -EPROTOTYPE;
+	if (sk->sk_type != type)
+		goto sock_put;
+
+	err = security_unix_find(path, sk, flags);
+	if (err)
+		goto sock_put;
+
+	touch_atime(path);
+
+	path_put(path);
+
+	return sk;
+
+sock_put:
+	sock_put(sk);
+path_put:
+	path_put(path);
+	return ERR_PTR(err);
+}
+
 static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 				  int type, int flags)
 {
-	struct inode *inode;
 	struct path path;
-	struct sock *sk;
 	int err;
 
 	unix_mkname_bsd(sunaddr, addr_len);
@@ -1207,47 +1247,28 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 					      LOOKUP_BENEATH | LOOKUP_NO_SYMLINKS |
 					      LOOKUP_NO_MAGICLINKS, &path);
 		path_put(&root);
-		if (err)
-			goto fail;
 	} else {
 		err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
-		if (err)
-			goto fail;
-
-		err = path_permission(&path, MAY_WRITE);
-		if (err)
-			goto path_put;
 	}
 
-	err = -ECONNREFUSED;
-	inode = d_backing_inode(path.dentry);
-	if (!S_ISSOCK(inode->i_mode))
-		goto path_put;
-
-	sk = unix_find_socket_byinode(inode);
-	if (!sk)
-		goto path_put;
-
-	err = -EPROTOTYPE;
-	if (sk->sk_type != type)
-		goto sock_put;
-
-	err = security_unix_find(&path, sk, flags);
 	if (err)
-		goto sock_put;
+		return ERR_PTR(err);
 
-	touch_atime(&path);
+	return unix_find_bsd_path(&path, type, flags);
+}
 
-	path_put(&path);
+static struct sock *unix_find_bsd2(int dfd, const char __user *user_path,
+				   int type)
+{
+	struct path path;
+	int err;
 
-	return sk;
+	err = user_path_at(dfd, user_path, LOOKUP_FOLLOW, &path);
 
-sock_put:
-	sock_put(sk);
-path_put:
-	path_put(&path);
-fail:
-	return ERR_PTR(err);
+	if (err)
+		return ERR_PTR(err);
+
+	return unix_find_bsd_path(&path, type, 0);
 }
 
 static struct sock *unix_find_abstract(struct net *net,
@@ -1344,8 +1365,8 @@ out:	mutex_unlock(&u->bindlock);
 	return err;
 }
 
-static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
-			 int addr_len)
+static int unix_bind_bsd_create(struct sock *sk, struct unix_address *addr,
+				struct dentry *dentry, struct path *parent)
 {
 	umode_t mode = S_IFSOCK |
 	       (SOCK_INODE(sk->sk_socket)->i_mode & ~current_umask());
@@ -1353,34 +1374,15 @@ static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
 	unsigned int new_hash, old_hash;
 	struct net *net = sock_net(sk);
 	struct mnt_idmap *idmap;
-	struct unix_address *addr;
-	struct dentry *dentry;
-	struct path parent;
 	int err;
-
-	addr_len = unix_mkname_bsd(sunaddr, addr_len);
-	addr = unix_create_addr(sunaddr->sun_path,
-				addr_len - offsetof(struct sockaddr_un, sun_path));
-	if (!addr)
-		return -ENOMEM;
-
-	/*
-	 * Get the parent directory, calculate the hash for last
-	 * component.
-	 */
-	dentry = start_creating_path(AT_FDCWD, addr->name, &parent, 0);
-	if (IS_ERR(dentry)) {
-		err = PTR_ERR(dentry);
-		goto out;
-	}
 
 	/*
 	 * All right, let's create it.
 	 */
-	idmap = mnt_idmap(parent.mnt);
-	err = security_path_mknod(&parent, dentry, mode, 0);
+	idmap = mnt_idmap(parent->mnt);
+	err = security_path_mknod(parent, dentry, mode, 0);
 	if (!err)
-		err = vfs_mknod(idmap, d_inode(parent.dentry), dentry, mode, 0, NULL);
+		err = vfs_mknod(idmap, d_inode(parent->dentry), dentry, mode, 0, NULL);
 	if (err)
 		goto out_path;
 	err = mutex_lock_interruptible(&u->bindlock);
@@ -1392,13 +1394,13 @@ static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
 	old_hash = sk->sk_hash;
 	new_hash = unix_bsd_hash(d_backing_inode(dentry));
 	unix_table_double_lock(net, old_hash, new_hash);
-	u->path.mnt = mntget(parent.mnt);
+	u->path.mnt = mntget(parent->mnt);
 	u->path.dentry = dget(dentry);
 	__unix_set_addr_hash(net, sk, addr, new_hash);
 	unix_table_double_unlock(net, old_hash, new_hash);
 	unix_insert_bsd_socket(sk);
 	mutex_unlock(&u->bindlock);
-	end_creating_path(&parent, dentry);
+	end_creating_path(parent, dentry);
 	return 0;
 
 out_unlock:
@@ -1406,13 +1408,76 @@ out_unlock:
 	err = -EINVAL;
 out_unlink:
 	/* failed after successful mknod?  unlink what we'd created... */
-	vfs_unlink(idmap, d_inode(parent.dentry), dentry, NULL);
+	vfs_unlink(idmap, d_inode(parent->dentry), dentry, NULL);
 out_path:
-	end_creating_path(&parent, dentry);
-out:
-	unix_release_addr(addr);
+	end_creating_path(parent, dentry);
 	return err == -EEXIST ? -EADDRINUSE : err;
 }
+
+static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
+			 int addr_len)
+{
+	struct unix_address *addr;
+	struct dentry *dentry;
+	struct path parent;
+	int err;
+
+	addr_len = unix_mkname_bsd(sunaddr, addr_len);
+	addr = unix_create_addr(sunaddr->sun_path,
+				addr_len - offsetof(struct sockaddr_un, sun_path));
+	if (!addr)
+		return -ENOMEM;
+
+	dentry = start_creating_path(AT_FDCWD, addr->name, &parent, 0);
+	if (IS_ERR(dentry)) {
+		unix_release_addr(addr);
+		return PTR_ERR(dentry);
+	}
+
+	err = unix_bind_bsd_create(sk, addr, dentry, &parent);
+	if (err)
+		unix_release_addr(addr);
+	return err;
+}
+
+static int unix_bind_bsd2(struct sock *sk, int dfd,
+			  const char __user *user_path)
+{
+	struct sockaddr_un sunaddr;
+	struct unix_address *addr;
+	struct dentry *dentry;
+	struct path parent;
+	int addr_len, err;
+
+	/* Copy path for internal address storage */
+	sunaddr.sun_family = AF_UNIX;
+	err = strncpy_from_user(sunaddr.sun_path, user_path,
+				sizeof(sunaddr.sun_path));
+	if (err < 0)
+		return err;
+	if (err == sizeof(sunaddr.sun_path))
+		return -ENAMETOOLONG;
+	addr_len = unix_mkname_bsd(&sunaddr,
+				   offsetof(struct sockaddr_un, sun_path) + err + 1);
+
+	addr = unix_create_addr(sunaddr.sun_path,
+				addr_len - offsetof(struct sockaddr_un, sun_path));
+	if (!addr)
+		return -ENOMEM;
+
+	/* Use the original user pointer for VFS path resolution */
+	dentry = start_creating_user_path(dfd, user_path, &parent, 0);
+	if (IS_ERR(dentry)) {
+		unix_release_addr(addr);
+		return PTR_ERR(dentry);
+	}
+
+	err = unix_bind_bsd_create(sk, addr, dentry, &parent);
+	if (err)
+		unix_release_addr(addr);
+	return err;
+}
+
 static int unix_bind_abstract(struct sock *sk, struct sockaddr_un *sunaddr,
 			      int addr_len)
 {
@@ -1464,6 +1529,17 @@ static int unix_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int ad
 	struct sock *sk = sock->sk;
 	int err;
 
+	if (uaddr->sa_family == AF_UNIX2) {
+		struct sockaddr_un2 *un2 = (struct sockaddr_un2 *)uaddr;
+
+		if (addr_len != sizeof(*un2))
+			return -EINVAL;
+		if (un2->sun2_flags)
+			return -EINVAL;
+
+		return unix_bind_bsd2(sk, un2->sun2_dfd, un2->sun2_path);
+	}
+
 	if (addr_len == offsetof(struct sockaddr_un, sun_path) &&
 	    sunaddr->sun_family == AF_UNIX)
 		return unix_autobind(sk);
@@ -1508,6 +1584,7 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr
 			      int alen, int flags)
 {
 	struct sockaddr_un *sunaddr = (struct sockaddr_un *)addr;
+	struct sockaddr_un2 *un2 = NULL;
 	struct sock *sk = sock->sk;
 	struct sock *other;
 	int err;
@@ -1516,10 +1593,21 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr
 	if (alen < offsetofend(struct sockaddr, sa_family))
 		goto out;
 
-	if (addr->sa_family != AF_UNSPEC) {
-		err = unix_validate_addr(sunaddr, alen);
-		if (err)
+	if (addr->sa_family == AF_UNIX2) {
+		un2 = (struct sockaddr_un2 *)addr;
+
+		if (alen != sizeof(*un2))
 			goto out;
+		if (un2->sun2_flags)
+			goto out;
+	}
+
+	if (addr->sa_family != AF_UNSPEC) {
+		if (!un2) {
+			err = unix_validate_addr(sunaddr, alen);
+			if (err)
+				goto out;
+		}
 
 		err = BPF_CGROUP_RUN_PROG_UNIX_CONNECT_LOCK(sk, addr, &alen);
 		if (err)
@@ -1532,7 +1620,12 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr
 		}
 
 restart:
-		other = unix_find_other(sock_net(sk), sunaddr, alen, sock->type, 0);
+		if (un2)
+			other = unix_find_bsd2(un2->sun2_dfd, un2->sun2_path,
+					       sock->type);
+		else
+			other = unix_find_other(sock_net(sk), sunaddr, alen,
+						sock->type, 0);
 		if (IS_ERR(other)) {
 			err = PTR_ERR(other);
 			goto out;
@@ -1629,6 +1722,7 @@ static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uad
 	struct sockaddr_un *sunaddr = (struct sockaddr_un *)uaddr;
 	struct sock *sk = sock->sk, *newsk = NULL, *other = NULL;
 	struct unix_sock *u = unix_sk(sk), *newu, *otheru;
+	struct sockaddr_un2 *un2 = NULL;
 	struct unix_peercred peercred = {};
 	struct net *net = sock_net(sk);
 	struct sk_buff *skb = NULL;
@@ -1636,9 +1730,18 @@ static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uad
 	long timeo;
 	int err;
 
-	err = unix_validate_addr(sunaddr, addr_len);
-	if (err)
-		goto out;
+	if (uaddr->sa_family == AF_UNIX2) {
+		un2 = (struct sockaddr_un2 *)uaddr;
+
+		if (addr_len != sizeof(*un2))
+			return -EINVAL;
+		if (un2->sun2_flags)
+			return -EINVAL;
+	} else {
+		err = unix_validate_addr(sunaddr, addr_len);
+		if (err)
+			goto out;
+	}
 
 	err = BPF_CGROUP_RUN_PROG_UNIX_CONNECT_LOCK(sk, uaddr, &addr_len);
 	if (err)
@@ -1672,7 +1775,12 @@ static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uad
 
 restart:
 	/*  Find listening sock. */
-	other = unix_find_other(net, sunaddr, addr_len, sk->sk_type, flags);
+	if (un2)
+		other = unix_find_bsd2(un2->sun2_dfd, un2->sun2_path,
+				       sk->sk_type);
+	else
+		other = unix_find_other(net, sunaddr, addr_len, sk->sk_type,
+					flags);
 	if (IS_ERR(other)) {
 		err = PTR_ERR(other);
 		goto out_free_skb;

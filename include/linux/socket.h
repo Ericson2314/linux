@@ -255,8 +255,17 @@ struct ucred {
 #define AF_MCTP		45	/* Management component
 				 * transport protocol
 				 */
+#define AF_UNIX2	46	/* AF_UNIX with extended addressing.
+				 * Note this is *not* an actual distinct
+				 * address family, but just here to
+				 * distinguish different initialization
+				 * structs.Any internal non-syscall-API
+				 * usage should normalize AF_UNIX2 to
+				 * AF_UNIX as there is no difference
+				 * between sockets initialized the two
+				 * different ways. */
 
-#define AF_MAX		46	/* For now.. */
+#define AF_MAX		47	/* For now.. */
 
 /* Protocol families, same as address families. */
 #define PF_UNSPEC	AF_UNSPEC
