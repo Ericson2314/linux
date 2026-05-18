@@ -56,6 +56,7 @@
 #include <linux/ethtool.h>
 #include <linux/mm.h>
 #include <linux/socket.h>
+#include <linux/fcntl.h>
 #include <linux/file.h>
 #include <linux/splice.h>
 #include <linux/net.h>
@@ -1922,17 +1923,28 @@ SYSCALL_DEFINE4(socketpair, int, family, int, type, int, protocol,
 	return __sys_socketpair(family, type, protocol, usockvec);
 }
 
-int __sys_bind_socket(struct socket *sock, struct sockaddr_storage *address,
-		      int addrlen)
+int __sys_bind_socket(struct socket *sock, int dfd,
+		      struct sockaddr_storage *address, int addrlen)
 {
+	const struct proto_ops *ops;
 	int err;
 
 	err = security_socket_bind(sock, (struct sockaddr *)address,
 				   addrlen);
-	if (!err)
-		err = READ_ONCE(sock->ops)->bind(sock,
-						 (struct sockaddr_unsized *)address,
-						 addrlen);
+	if (!err) {
+		ops = READ_ONCE(sock->ops);
+		if (dfd != AT_FDCWD) {
+			if (!ops->bind_at)
+				return -EOPNOTSUPP;
+			err = ops->bind_at(sock, dfd,
+					   (struct sockaddr_unsized *)address,
+					   addrlen, 0);
+		} else {
+			err = ops->bind(sock,
+					(struct sockaddr_unsized *)address,
+					addrlen);
+		}
+	}
 	return err;
 }
 
@@ -1944,12 +1956,21 @@ int __sys_bind_socket(struct socket *sock, struct sockaddr_storage *address,
  *	the protocol layer (having also checked the address is ok).
  */
 
-int __sys_bind(int fd, struct sockaddr __user *umyaddr, int addrlen)
+SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
+{
+	return __sys_bindat(AT_FDCWD, fd, umyaddr, addrlen, 0);
+}
+
+int __sys_bindat(int dfd, int fd, struct sockaddr __user *umyaddr,
+		 int addrlen, int flags)
 {
 	struct socket *sock;
 	struct sockaddr_storage address;
 	CLASS(fd, f)(fd);
 	int err;
+
+	if (flags)
+		return -EINVAL;
 
 	if (fd_empty(f))
 		return -EBADF;
@@ -1961,12 +1982,13 @@ int __sys_bind(int fd, struct sockaddr __user *umyaddr, int addrlen)
 	if (unlikely(err))
 		return err;
 
-	return __sys_bind_socket(sock, &address, addrlen);
+	return __sys_bind_socket(sock, dfd, &address, addrlen);
 }
 
-SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
+SYSCALL_DEFINE5(bindat, int, dfd, int, fd, struct sockaddr __user *, umyaddr,
+		int, addrlen, int, flags)
 {
-	return __sys_bind(fd, umyaddr, addrlen);
+	return __sys_bindat(dfd, fd, umyaddr, addrlen, flags);
 }
 
 /*
@@ -2128,9 +2150,11 @@ SYSCALL_DEFINE3(accept, int, fd, struct sockaddr __user *, upeer_sockaddr,
  *	include the -EINPROGRESS status for such sockets.
  */
 
-int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
+int __sys_connect_file(struct file *file, int dfd,
+		       struct sockaddr_storage *address,
 		       int addrlen, int file_flags)
 {
+	const struct proto_ops *ops;
 	struct socket *sock;
 	int err;
 
@@ -2145,17 +2169,38 @@ int __sys_connect_file(struct file *file, struct sockaddr_storage *address,
 	if (err)
 		goto out;
 
-	err = READ_ONCE(sock->ops)->connect(sock, (struct sockaddr_unsized *)address,
-					    addrlen, sock->file->f_flags | file_flags);
+	ops = READ_ONCE(sock->ops);
+	if (dfd != AT_FDCWD) {
+		if (!ops->connect_at) {
+			err = -EOPNOTSUPP;
+			goto out;
+		}
+		err = ops->connect_at(sock, dfd,
+				      (struct sockaddr_unsized *)address,
+				      addrlen, sock->file->f_flags | file_flags);
+	} else {
+		err = ops->connect(sock, (struct sockaddr_unsized *)address,
+				   addrlen, sock->file->f_flags | file_flags);
+	}
 out:
 	return err;
 }
 
-int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
+SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
+		int, addrlen)
+{
+	return __sys_connectat(AT_FDCWD, fd, uservaddr, addrlen, 0);
+}
+
+int __sys_connectat(int dfd, int fd, struct sockaddr __user *uservaddr,
+		    int addrlen, int flags)
 {
 	struct sockaddr_storage address;
 	CLASS(fd, f)(fd);
 	int ret;
+
+	if (flags)
+		return -EINVAL;
 
 	if (fd_empty(f))
 		return -EBADF;
@@ -2164,13 +2209,13 @@ int __sys_connect(int fd, struct sockaddr __user *uservaddr, int addrlen)
 	if (ret)
 		return ret;
 
-	return __sys_connect_file(fd_file(f), &address, addrlen, 0);
+	return __sys_connect_file(fd_file(f), dfd, &address, addrlen, 0);
 }
 
-SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
-		int, addrlen)
+SYSCALL_DEFINE5(connectat, int, dfd, int, fd, struct sockaddr __user *,
+		uservaddr, int, addrlen, int, flags)
 {
-	return __sys_connect(fd, uservaddr, addrlen);
+	return __sys_connectat(dfd, fd, uservaddr, addrlen, flags);
 }
 
 int do_getsockname(struct socket *sock, int peer,
@@ -3215,10 +3260,10 @@ SYSCALL_DEFINE2(socketcall, int, call, unsigned long __user *, args)
 		err = __sys_socket(a0, a1, a[2]);
 		break;
 	case SYS_BIND:
-		err = __sys_bind(a0, (struct sockaddr __user *)a1, a[2]);
+		err = __sys_bindat(AT_FDCWD, a0, (struct sockaddr __user *)a1, a[2], 0);
 		break;
 	case SYS_CONNECT:
-		err = __sys_connect(a0, (struct sockaddr __user *)a1, a[2]);
+		err = __sys_connectat(AT_FDCWD, a0, (struct sockaddr __user *)a1, a[2], 0);
 		break;
 	case SYS_LISTEN:
 		err = __sys_listen(a0, a1);

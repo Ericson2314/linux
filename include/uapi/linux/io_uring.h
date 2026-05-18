@@ -318,6 +318,8 @@ enum io_uring_op {
 	IORING_OP_PIPE,
 	IORING_OP_NOP128,
 	IORING_OP_URING_CMD128,
+	IORING_OP_BINDAT,
+	IORING_OP_CONNECTAT,
 
 	/* this goes last, obviously */
 	IORING_OP_LAST,

@@ -55,6 +55,7 @@ extern int path_pts(struct path *path);
 extern int user_path_at(int, const char __user *, unsigned, struct path *);
 
 extern int kern_path(const char *, unsigned, struct path *);
+extern int kern_path_at(int, const char *, unsigned, struct path *);
 struct dentry *kern_path_parent(const char *name, struct path *parent);
 
 extern struct dentry *start_creating_path(int, const char *, struct path *, unsigned int);

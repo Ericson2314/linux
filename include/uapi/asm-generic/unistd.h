@@ -863,8 +863,14 @@ __SYSCALL(__NR_listns, sys_listns)
 #define __NR_rseq_slice_yield 471
 __SYSCALL(__NR_rseq_slice_yield, sys_rseq_slice_yield)
 
+/* net/socket.c */
+#define __NR_bindat 472
+__SYSCALL(__NR_bindat, sys_bindat)
+#define __NR_connectat 473
+__SYSCALL(__NR_connectat, sys_connectat)
+
 #undef __NR_syscalls
-#define __NR_syscalls 472
+#define __NR_syscalls 474
 
 /*
  * 32 bit systems traditionally used different

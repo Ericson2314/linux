@@ -843,8 +843,11 @@ out:
 
 static int unix_release(struct socket *);
 static int unix_bind(struct socket *, struct sockaddr_unsized *, int);
+static int unix_bind_at(struct socket *, int, struct sockaddr_unsized *, int, int);
 static int unix_stream_connect(struct socket *, struct sockaddr_unsized *,
 			       int addr_len, int flags);
+static int unix_stream_connect_at(struct socket *, int, struct sockaddr_unsized *,
+				  int, int);
 static int unix_socketpair(struct socket *, struct socket *);
 static int unix_accept(struct socket *, struct socket *, struct proto_accept_arg *arg);
 static int unix_getname(struct socket *, struct sockaddr *, int);
@@ -867,6 +870,8 @@ static int unix_read_skb(struct sock *sk, skb_read_actor_t recv_actor);
 static int unix_stream_read_skb(struct sock *sk, skb_read_actor_t recv_actor);
 static int unix_dgram_connect(struct socket *, struct sockaddr_unsized *,
 			      int, int);
+static int unix_dgram_connect_at(struct socket *, int, struct sockaddr_unsized *,
+				 int, int);
 static int unix_seqpacket_sendmsg(struct socket *, struct msghdr *, size_t);
 static int unix_seqpacket_recvmsg(struct socket *, struct msghdr *, size_t,
 				  int);
@@ -968,7 +973,9 @@ static const struct proto_ops unix_stream_ops = {
 	.owner =	THIS_MODULE,
 	.release =	unix_release,
 	.bind =		unix_bind,
+	.bind_at =	unix_bind_at,
 	.connect =	unix_stream_connect,
+	.connect_at =	unix_stream_connect_at,
 	.socketpair =	unix_socketpair,
 	.accept =	unix_accept,
 	.getname =	unix_getname,
@@ -994,7 +1001,9 @@ static const struct proto_ops unix_dgram_ops = {
 	.owner =	THIS_MODULE,
 	.release =	unix_release,
 	.bind =		unix_bind,
+	.bind_at =	unix_bind_at,
 	.connect =	unix_dgram_connect,
+	.connect_at =	unix_dgram_connect_at,
 	.socketpair =	unix_socketpair,
 	.accept =	sock_no_accept,
 	.getname =	unix_getname,
@@ -1018,7 +1027,9 @@ static const struct proto_ops unix_seqpacket_ops = {
 	.owner =	THIS_MODULE,
 	.release =	unix_release,
 	.bind =		unix_bind,
+	.bind_at =	unix_bind_at,
 	.connect =	unix_stream_connect,
+	.connect_at =	unix_stream_connect_at,
 	.socketpair =	unix_socketpair,
 	.accept =	unix_accept,
 	.getname =	unix_getname,
@@ -1188,7 +1199,7 @@ static int unix_release(struct socket *sock)
 }
 
 static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
-				  int type, int flags)
+				  int type, int flags, int dfd)
 {
 	struct inode *inode;
 	struct path path;
@@ -1212,7 +1223,7 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 		if (err)
 			goto fail;
 	} else {
-		err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
+		err = kern_path_at(dfd, sunaddr->sun_path, LOOKUP_FOLLOW, &path);
 		if (err)
 			goto fail;
 
@@ -1273,12 +1284,13 @@ static struct sock *unix_find_abstract(struct net *net,
 
 static struct sock *unix_find_other(struct net *net,
 				    struct sockaddr_un *sunaddr,
-				    int addr_len, int type, int flags)
+				    int addr_len, int type, int flags,
+				    int dfd)
 {
 	struct sock *sk;
 
 	if (sunaddr->sun_path[0])
-		sk = unix_find_bsd(sunaddr, addr_len, type, flags);
+		sk = unix_find_bsd(sunaddr, addr_len, type, flags, dfd);
 	else
 		sk = unix_find_abstract(net, sunaddr, addr_len, type);
 
@@ -1348,7 +1360,7 @@ out:	mutex_unlock(&u->bindlock);
 }
 
 static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
-			 int addr_len)
+			 int addr_len, int dfd)
 {
 	umode_t mode = S_IFSOCK |
 	       (SOCK_INODE(sk->sk_socket)->i_mode & ~current_umask());
@@ -1370,7 +1382,7 @@ static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
 	 * Get the parent directory, calculate the hash for last
 	 * component.
 	 */
-	dentry = start_creating_path(AT_FDCWD, addr->name->sun_path, &parent, 0);
+	dentry = start_creating_path(dfd, addr->name->sun_path, &parent, 0);
 	if (IS_ERR(dentry)) {
 		err = PTR_ERR(dentry);
 		goto out;
@@ -1462,9 +1474,18 @@ out:
 
 static int unix_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int addr_len)
 {
+	return unix_bind_at(sock, AT_FDCWD, uaddr, addr_len, 0);
+}
+
+static int unix_bind_at(struct socket *sock, int dfd,
+			struct sockaddr_unsized *uaddr, int addr_len, int flags)
+{
 	struct sockaddr_un *sunaddr = (struct sockaddr_un *)uaddr;
 	struct sock *sk = sock->sk;
 	int err;
+
+	if (flags)
+		return -EINVAL;
 
 	if (addr_len == offsetof(struct sockaddr_un, sun_path) &&
 	    sunaddr->sun_family == AF_UNIX)
@@ -1475,7 +1496,7 @@ static int unix_bind(struct socket *sock, struct sockaddr_unsized *uaddr, int ad
 		return err;
 
 	if (sunaddr->sun_path[0])
-		err = unix_bind_bsd(sk, sunaddr, addr_len);
+		err = unix_bind_bsd(sk, sunaddr, addr_len, dfd);
 	else
 		err = unix_bind_abstract(sk, sunaddr, addr_len);
 
@@ -1506,8 +1527,9 @@ static void unix_state_double_unlock(struct sock *sk1, struct sock *sk2)
 	unix_state_unlock(sk2);
 }
 
-static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr,
-			      int alen, int flags)
+static int unix_dgram_connect_at(struct socket *sock, int dfd,
+				 struct sockaddr_unsized *addr,
+				 int alen, int at_flags)
 {
 	struct sockaddr_un *sunaddr = (struct sockaddr_un *)addr;
 	struct sock *sk = sock->sk;
@@ -1534,7 +1556,8 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr
 		}
 
 restart:
-		other = unix_find_other(sock_net(sk), sunaddr, alen, sock->type, 0);
+		other = unix_find_other(sock_net(sk), sunaddr, alen, sock->type,
+				       0, dfd);
 		if (IS_ERR(other)) {
 			err = PTR_ERR(other);
 			goto out;
@@ -1604,6 +1627,12 @@ out:
 	return err;
 }
 
+static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr,
+			      int alen, int flags)
+{
+	return unix_dgram_connect_at(sock, AT_FDCWD, addr, alen, 0);
+}
+
 static long unix_wait_for_peer(struct sock *other, long timeo)
 {
 	struct unix_sock *u = unix_sk(other);
@@ -1625,12 +1654,14 @@ static long unix_wait_for_peer(struct sock *other, long timeo)
 	return timeo;
 }
 
-static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
-			       int addr_len, int flags)
+static int unix_stream_connect_at(struct socket *sock, int dfd,
+				  struct sockaddr_unsized *uaddr,
+				  int addr_len, int at_flags)
 {
 	struct sockaddr_un *sunaddr = (struct sockaddr_un *)uaddr;
 	struct sock *sk = sock->sk, *newsk = NULL, *other = NULL;
 	struct unix_sock *u = unix_sk(sk), *newu, *otheru;
+	int flags = sock->file->f_flags;
 	struct unix_peercred peercred = {};
 	struct net *net = sock_net(sk);
 	struct sk_buff *skb = NULL;
@@ -1674,7 +1705,8 @@ static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uad
 
 restart:
 	/*  Find listening sock. */
-	other = unix_find_other(net, sunaddr, addr_len, sk->sk_type, flags);
+	other = unix_find_other(net, sunaddr, addr_len, sk->sk_type, flags,
+			       dfd);
 	if (IS_ERR(other)) {
 		err = PTR_ERR(other);
 		goto out_free_skb;
@@ -1803,6 +1835,12 @@ out_free_sk:
 out:
 	drop_peercred(&peercred);
 	return err;
+}
+
+static int unix_stream_connect(struct socket *sock, struct sockaddr_unsized *uaddr,
+			       int addr_len, int flags)
+{
+	return unix_stream_connect_at(sock, AT_FDCWD, uaddr, addr_len, 0);
 }
 
 static int unix_socketpair(struct socket *socka, struct socket *sockb)
@@ -2160,7 +2198,8 @@ static int unix_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 	if (msg->msg_namelen) {
 lookup:
 		other = unix_find_other(sock_net(sk), msg->msg_name,
-					msg->msg_namelen, sk->sk_type, 0);
+					msg->msg_namelen, sk->sk_type, 0,
+					AT_FDCWD);
 		if (IS_ERR(other)) {
 			err = PTR_ERR(other);
 			goto out_free;

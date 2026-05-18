@@ -3045,6 +3045,13 @@ int kern_path(const char *name, unsigned int flags, struct path *path)
 }
 EXPORT_SYMBOL(kern_path);
 
+int kern_path_at(int dfd, const char *name, unsigned int flags, struct path *path)
+{
+	CLASS(filename_kernel, filename)(name);
+	return filename_lookup(dfd, filename, flags, path, NULL);
+}
+EXPORT_SYMBOL(kern_path_at);
+
 /**
  * vfs_path_parent_lookup - lookup a parent path relative to a dentry-vfsmount pair
  * @filename: filename structure

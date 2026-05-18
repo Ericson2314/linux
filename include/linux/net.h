@@ -185,7 +185,13 @@ struct proto_ops {
 	int		(*bind)	     (struct socket *sock,
 				      struct sockaddr_unsized *myaddr,
 				      int sockaddr_len);
+	int		(*bind_at)   (struct socket *sock, int dfd,
+				      struct sockaddr_unsized *myaddr,
+				      int sockaddr_len, int flags);
 	int		(*connect)   (struct socket *sock,
+				      struct sockaddr_unsized *vaddr,
+				      int sockaddr_len, int flags);
+	int		(*connect_at)(struct socket *sock, int dfd,
 				      struct sockaddr_unsized *vaddr,
 				      int sockaddr_len, int flags);
 	int		(*socketpair)(struct socket *sock1,

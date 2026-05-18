@@ -772,9 +772,11 @@ asmlinkage long sys_shmdt(char __user *shmaddr);
 asmlinkage long sys_socket(int, int, int);
 asmlinkage long sys_socketpair(int, int, int, int __user *);
 asmlinkage long sys_bind(int, struct sockaddr __user *, int);
+asmlinkage long sys_bindat(int, int, struct sockaddr __user *, int, int);
 asmlinkage long sys_listen(int, int);
 asmlinkage long sys_accept(int, struct sockaddr __user *, int __user *);
 asmlinkage long sys_connect(int, struct sockaddr __user *, int);
+asmlinkage long sys_connectat(int, int, struct sockaddr __user *, int, int);
 asmlinkage long sys_getsockname(int, struct sockaddr __user *, int __user *);
 asmlinkage long sys_getpeername(int, struct sockaddr __user *, int __user *);
 asmlinkage long sys_sendto(int, void __user *, size_t, unsigned,

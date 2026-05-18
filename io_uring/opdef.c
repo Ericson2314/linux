@@ -205,7 +205,7 @@ const struct io_issue_def io_issue_defs[] = {
 #if defined(CONFIG_NET)
 		.async_size		= sizeof(struct io_async_msghdr),
 		.prep			= io_connect_prep,
-		.issue			= io_connect,
+		.issue			= io_connectat,
 #else
 		.prep			= io_eopnotsupp_prep,
 #endif
@@ -502,7 +502,7 @@ const struct io_issue_def io_issue_defs[] = {
 #if defined(CONFIG_NET)
 		.needs_file		= 1,
 		.prep			= io_bind_prep,
-		.issue			= io_bind,
+		.issue			= io_bindat,
 		.async_size		= sizeof(struct io_async_msghdr),
 #else
 		.prep			= io_eopnotsupp_prep,
@@ -588,6 +588,28 @@ const struct io_issue_def io_issue_defs[] = {
 		.async_size		= sizeof(struct io_async_cmd),
 		.prep			= io_uring_cmd_prep,
 		.issue			= io_uring_cmd,
+	},
+	[IORING_OP_BINDAT] = {
+#if defined(CONFIG_NET)
+		.needs_file		= 1,
+		.prep			= io_bindat_prep,
+		.issue			= io_bindat,
+		.async_size		= sizeof(struct io_async_msghdr),
+#else
+		.prep			= io_eopnotsupp_prep,
+#endif
+	},
+	[IORING_OP_CONNECTAT] = {
+		.needs_file		= 1,
+		.unbound_nonreg_file	= 1,
+		.pollout		= 1,
+#if defined(CONFIG_NET)
+		.async_size		= sizeof(struct io_async_msghdr),
+		.prep			= io_connectat_prep,
+		.issue			= io_connectat,
+#else
+		.prep			= io_eopnotsupp_prep,
+#endif
 	},
 };
 
@@ -846,6 +868,12 @@ const struct io_cold_def io_cold_defs[] = {
 		.name			= "URING_CMD128",
 		.sqe_copy		= io_uring_cmd_sqe_copy,
 		.cleanup		= io_uring_cmd_cleanup,
+	},
+	[IORING_OP_BINDAT] = {
+		.name			= "BINDAT",
+	},
+	[IORING_OP_CONNECTAT] = {
+		.name			= "CONNECTAT",
 	},
 };
 

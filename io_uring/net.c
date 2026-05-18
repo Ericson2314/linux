@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/fcntl.h>
 #include <linux/file.h>
 #include <linux/slab.h>
 #include <linux/net.h>
@@ -44,17 +45,19 @@ struct io_socket {
 	unsigned long			nofile;
 };
 
-struct io_connect {
+struct io_connectat {
 	struct file			*file;
 	struct sockaddr __user		*addr;
 	int				addr_len;
+	int				dfd;
 	bool				in_progress;
 	bool				seen_econnaborted;
 };
 
-struct io_bind {
+struct io_bindat {
 	struct file			*file;
 	int				addr_len;
+	int				dfd;
 };
 
 struct io_listen {
@@ -1728,16 +1731,17 @@ int io_socket(struct io_kiocb *req, unsigned int issue_flags)
 	return IOU_COMPLETE;
 }
 
-int io_connect_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+int io_connectat_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_connect *conn = io_kiocb_to_cmd(req, struct io_connect);
+	struct io_connectat *conn = io_kiocb_to_cmd(req, struct io_connectat);
 	struct io_async_msghdr *io;
 
-	if (sqe->len || sqe->buf_index || sqe->rw_flags || sqe->splice_fd_in)
+	if (sqe->len || sqe->buf_index || sqe->rw_flags)
 		return -EINVAL;
 
 	conn->addr = u64_to_user_ptr(READ_ONCE(sqe->addr));
-	conn->addr_len =  READ_ONCE(sqe->addr2);
+	conn->addr_len = READ_ONCE(sqe->addr2);
+	conn->dfd = READ_ONCE(sqe->splice_fd_in);
 	conn->in_progress = conn->seen_econnaborted = false;
 
 	io = io_msg_alloc_async(req);
@@ -1747,9 +1751,26 @@ int io_connect_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	return move_addr_to_kernel(conn->addr, conn->addr_len, &io->addr);
 }
 
-int io_connect(struct io_kiocb *req, unsigned int issue_flags)
+int io_connect_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_connect *connect = io_kiocb_to_cmd(req, struct io_connect);
+	struct io_connectat *conn;
+	int ret;
+
+	if (sqe->splice_fd_in)
+		return -EINVAL;
+
+	ret = io_connectat_prep(req, sqe);
+	if (ret)
+		return ret;
+
+	conn = io_kiocb_to_cmd(req, struct io_connectat);
+	conn->dfd = AT_FDCWD;
+	return 0;
+}
+
+int io_connectat(struct io_kiocb *req, unsigned int issue_flags)
+{
+	struct io_connectat *connect = io_kiocb_to_cmd(req, struct io_connectat);
 	struct io_async_msghdr *io = req->async_data;
 	unsigned file_flags;
 	int ret;
@@ -1764,8 +1785,8 @@ int io_connect(struct io_kiocb *req, unsigned int issue_flags)
 
 	file_flags = force_nonblock ? O_NONBLOCK : 0;
 
-	ret = __sys_connect_file(req->file, &io->addr, connect->addr_len,
-				 file_flags);
+	ret = __sys_connect_file(req->file, connect->dfd, &io->addr,
+				    connect->addr_len, file_flags);
 	if ((ret == -EAGAIN || ret == -EINPROGRESS || ret == -ECONNABORTED)
 	    && force_nonblock) {
 		if (ret == -EINPROGRESS) {
@@ -1799,17 +1820,18 @@ out:
 	return IOU_COMPLETE;
 }
 
-int io_bind_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
+int io_bindat_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_bind *bind = io_kiocb_to_cmd(req, struct io_bind);
+	struct io_bindat *bind = io_kiocb_to_cmd(req, struct io_bindat);
 	struct sockaddr __user *uaddr;
 	struct io_async_msghdr *io;
 
-	if (sqe->len || sqe->buf_index || sqe->rw_flags || sqe->splice_fd_in)
+	if (sqe->len || sqe->buf_index || sqe->rw_flags)
 		return -EINVAL;
 
 	uaddr = u64_to_user_ptr(READ_ONCE(sqe->addr));
-	bind->addr_len =  READ_ONCE(sqe->addr2);
+	bind->addr_len = READ_ONCE(sqe->addr2);
+	bind->dfd = READ_ONCE(sqe->splice_fd_in);
 
 	io = io_msg_alloc_async(req);
 	if (unlikely(!io))
@@ -1817,9 +1839,26 @@ int io_bind_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	return move_addr_to_kernel(uaddr, bind->addr_len, &io->addr);
 }
 
-int io_bind(struct io_kiocb *req, unsigned int issue_flags)
+int io_bind_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
-	struct io_bind *bind = io_kiocb_to_cmd(req, struct io_bind);
+	struct io_bindat *bind;
+	int ret;
+
+	if (sqe->splice_fd_in)
+		return -EINVAL;
+
+	ret = io_bindat_prep(req, sqe);
+	if (ret)
+		return ret;
+
+	bind = io_kiocb_to_cmd(req, struct io_bindat);
+	bind->dfd = AT_FDCWD;
+	return 0;
+}
+
+int io_bindat(struct io_kiocb *req, unsigned int issue_flags)
+{
+	struct io_bindat *bind = io_kiocb_to_cmd(req, struct io_bindat);
 	struct io_async_msghdr *io = req->async_data;
 	struct socket *sock;
 	int ret;
@@ -1828,7 +1867,7 @@ int io_bind(struct io_kiocb *req, unsigned int issue_flags)
 	if (unlikely(!sock))
 		return -ENOTSOCK;
 
-	ret = __sys_bind_socket(sock, &io->addr, bind->addr_len);
+	ret = __sys_bind_socket(sock, bind->dfd, &io->addr, bind->addr_len);
 	if (ret < 0)
 		req_set_fail(req);
 	io_req_set_res(req, ret, 0);
