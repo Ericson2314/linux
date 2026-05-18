@@ -255,8 +255,7 @@ static bool is_abstract_socket(struct sock *const sock)
 	if (!addr)
 		return false;
 
-	if (addr->len >= offsetof(struct sockaddr_un, sun_path) + 1 &&
-	    addr->name->sun_path[0] == '\0')
+	if (addr->len >= 1 && addr->name[0] == '\0')
 		return true;
 
 	return false;

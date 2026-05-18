@@ -74,22 +74,19 @@ static const char * const net_mask_names[] = {
 };
 
 static void audit_unix_addr(struct audit_buffer *ab, const char *str,
-			    struct sockaddr_un *addr, int addrlen)
+			    const char *name, int name_len)
 {
-	int len = unix_addr_len(addrlen);
-
-	if (!addr || len <= 0) {
+	if (!name || name_len <= 0) {
 		audit_log_format(ab, " %s=none", str);
-	} else if (addr->sun_path[0]) {
+	} else if (name[0]) {
 		audit_log_format(ab, " %s=", str);
-		audit_log_untrustedstring(ab, addr->sun_path);
+		audit_log_untrustedstring(ab, name);
 	} else {
 		audit_log_format(ab, " %s=\"@", str);
-		if (audit_string_contains_control(&addr->sun_path[1], len - 1))
-			audit_log_n_hex(ab, &addr->sun_path[1], len - 1);
+		if (audit_string_contains_control(&name[1], name_len - 1))
+			audit_log_n_hex(ab, &name[1], name_len - 1);
 		else
-			audit_log_format(ab, "%.*s", len - 1,
-					 &addr->sun_path[1]);
+			audit_log_format(ab, "%.*s", name_len - 1, &name[1]);
 		audit_log_format(ab, "\"");
 	}
 }
@@ -100,13 +97,12 @@ static void audit_unix_sk_addr(struct audit_buffer *ab, const char *str,
 	const struct unix_sock *u = unix_sk(sk);
 
 	if (u && u->addr) {
-		int addrlen;
-		struct sockaddr_un *addr = aa_sunaddr(u, &addrlen);
+		int name_len;
+		const char *name = aa_unix_addr_name(u, &name_len);
 
-		audit_unix_addr(ab, str, addr, addrlen);
+		audit_unix_addr(ab, str, name, name_len);
 	} else {
 		audit_unix_addr(ab, str, NULL, 0);
-
 	}
 }
 
@@ -144,13 +140,12 @@ void audit_net_cb(struct audit_buffer *ab, void *va)
 	if (ad->common.u.net->family == PF_UNIX) {
 		if (ad->net.addr || !ad->common.u.net->sk)
 			audit_unix_addr(ab, "addr",
-					unix_addr(ad->net.addr),
-					ad->net.addrlen);
+					ad->net.addr, ad->net.addrlen);
 		else
 			audit_unix_sk_addr(ab, "addr", ad->common.u.net->sk);
 		if (ad->request & NET_PEER_MASK) {
 			audit_unix_addr(ab, "peer_addr",
-					unix_addr(ad->net.peer.addr),
+					ad->net.peer.addr,
 					ad->net.peer.addrlen);
 		}
 	}

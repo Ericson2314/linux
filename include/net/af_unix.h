@@ -23,8 +23,8 @@ static inline struct unix_sock *unix_get_socket(struct file *filp)
 
 struct unix_address {
 	refcount_t	refcnt;
-	int		len;
-	struct sockaddr_un name[];
+	int		len;	/* length of name[] */
+	char		name[];
 };
 
 struct scm_stat {

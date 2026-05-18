@@ -324,8 +324,8 @@ void audit_log_lsm_data(struct audit_buffer *ab,
 					audit_log_d_path(ab, " path=", &u->path);
 					break;
 				}
-				len = addr->len-sizeof(short);
-				p = &addr->name->sun_path[0];
+				len = addr->len;
+				p = addr->name;
 				audit_log_format(ab, " path=");
 				if (*p)
 					audit_log_untrustedstring(ab, p);

@@ -212,10 +212,9 @@ static unsigned int unix_bsd_hash(struct inode *i)
 	return i->i_ino & UNIX_HASH_MOD;
 }
 
-static unsigned int unix_abstract_hash(struct sockaddr_un *sunaddr,
-				       int addr_len, int type)
+static unsigned int unix_abstract_hash(const char *name, int name_len, int type)
 {
-	__wsum csum = csum_partial(sunaddr, addr_len, 0);
+	__wsum csum = csum_partial(name, name_len, 0);
 	unsigned int hash;
 
 	hash = (__force unsigned int)csum_fold(csum);
@@ -303,18 +302,17 @@ struct sock *unix_peer_get(struct sock *s)
 }
 EXPORT_SYMBOL_GPL(unix_peer_get);
 
-static struct unix_address *unix_create_addr(struct sockaddr_un *sunaddr,
-					     int addr_len)
+static struct unix_address *unix_create_addr(const char *name, int name_len)
 {
 	struct unix_address *addr;
 
-	addr = kmalloc(sizeof(*addr) + addr_len, GFP_KERNEL);
+	addr = kmalloc(sizeof(*addr) + name_len, GFP_KERNEL);
 	if (!addr)
 		return NULL;
 
 	refcount_set(&addr->refcnt, 1);
-	addr->len = addr_len;
-	memcpy(addr->name, sunaddr, addr_len);
+	addr->len = name_len;
+	memcpy(addr->name, name, name_len);
 
 	return addr;
 }
@@ -423,7 +421,7 @@ static void unix_remove_bsd_socket(struct sock *sk)
 }
 
 static struct sock *__unix_find_socket_byname(struct net *net,
-					      struct sockaddr_un *sunname,
+					      const char *name,
 					      int len, unsigned int hash)
 {
 	struct sock *s;
@@ -432,20 +430,20 @@ static struct sock *__unix_find_socket_byname(struct net *net,
 		struct unix_sock *u = unix_sk(s);
 
 		if (u->addr->len == len &&
-		    !memcmp(u->addr->name, sunname, len))
+		    !memcmp(u->addr->name, name, len))
 			return s;
 	}
 	return NULL;
 }
 
 static inline struct sock *unix_find_socket_byname(struct net *net,
-						   struct sockaddr_un *sunname,
+						   const char *name,
 						   int len, unsigned int hash)
 {
 	struct sock *s;
 
 	spin_lock(&net->unx.table.locks[hash]);
-	s = __unix_find_socket_byname(net, sunname, len, hash);
+	s = __unix_find_socket_byname(net, name, len, hash);
 	if (s)
 		sock_hold(s);
 	spin_unlock(&net->unx.table.locks[hash]);
@@ -1256,11 +1254,12 @@ static struct sock *unix_find_abstract(struct net *net,
 				       struct sockaddr_un *sunaddr,
 				       int addr_len, int type)
 {
-	unsigned int hash = unix_abstract_hash(sunaddr, addr_len, type);
+	int name_len = addr_len - offsetof(struct sockaddr_un, sun_path);
+	unsigned int hash = unix_abstract_hash(sunaddr->sun_path, name_len, type);
 	struct dentry *dentry;
 	struct sock *sk;
 
-	sk = unix_find_socket_byname(net, sunaddr, addr_len, hash);
+	sk = unix_find_socket_byname(net, sunaddr->sun_path, name_len, hash);
 	if (!sk)
 		return ERR_PTR(-ECONNREFUSED);
 
@@ -1302,13 +1301,11 @@ static int unix_autobind(struct sock *sk)
 		goto out;
 
 	err = -ENOMEM;
-	addr = kzalloc(sizeof(*addr) +
-		       offsetof(struct sockaddr_un, sun_path) + 16, GFP_KERNEL);
+	addr = kzalloc(sizeof(*addr) + 6, GFP_KERNEL);
 	if (!addr)
 		goto out;
 
-	addr->len = offsetof(struct sockaddr_un, sun_path) + 6;
-	addr->name->sun_family = AF_UNIX;
+	addr->len = 6;
 	refcount_set(&addr->refcnt, 1);
 
 	old_hash = sk->sk_hash;
@@ -1316,7 +1313,7 @@ static int unix_autobind(struct sock *sk)
 	lastnum = ordernum & 0xFFFFF;
 retry:
 	ordernum = (ordernum + 1) & 0xFFFFF;
-	sprintf(addr->name->sun_path + 1, "%05x", ordernum);
+	sprintf(addr->name + 1, "%05x", ordernum);
 
 	new_hash = unix_abstract_hash(addr->name, addr->len, sk->sk_type);
 	unix_table_double_lock(net, old_hash, new_hash);
@@ -1362,7 +1359,8 @@ static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
 	int err;
 
 	addr_len = unix_mkname_bsd(sunaddr, addr_len);
-	addr = unix_create_addr(sunaddr, addr_len);
+	addr = unix_create_addr(sunaddr->sun_path,
+				addr_len - offsetof(struct sockaddr_un, sun_path));
 	if (!addr)
 		return -ENOMEM;
 
@@ -1370,7 +1368,7 @@ static int unix_bind_bsd(struct sock *sk, struct sockaddr_un *sunaddr,
 	 * Get the parent directory, calculate the hash for last
 	 * component.
 	 */
-	dentry = start_creating_path(AT_FDCWD, addr->name->sun_path, &parent, 0);
+	dentry = start_creating_path(AT_FDCWD, addr->name, &parent, 0);
 	if (IS_ERR(dentry)) {
 		err = PTR_ERR(dentry);
 		goto out;
@@ -1415,7 +1413,6 @@ out:
 	unix_release_addr(addr);
 	return err == -EEXIST ? -EADDRINUSE : err;
 }
-
 static int unix_bind_abstract(struct sock *sk, struct sockaddr_un *sunaddr,
 			      int addr_len)
 {
@@ -1425,7 +1422,8 @@ static int unix_bind_abstract(struct sock *sk, struct sockaddr_un *sunaddr,
 	struct unix_address *addr;
 	int err;
 
-	addr = unix_create_addr(sunaddr, addr_len);
+	addr = unix_create_addr(sunaddr->sun_path,
+				addr_len - offsetof(struct sockaddr_un, sun_path));
 	if (!addr)
 		return -ENOMEM;
 
@@ -1908,8 +1906,9 @@ static int unix_getname(struct socket *sock, struct sockaddr *uaddr, int peer)
 		sunaddr->sun_path[0] = 0;
 		err = offsetof(struct sockaddr_un, sun_path);
 	} else {
-		err = addr->len;
-		memcpy(sunaddr, addr->name, addr->len);
+		err = offsetof(struct sockaddr_un, sun_path) + addr->len;
+		sunaddr->sun_family = AF_UNIX;
+		memcpy(sunaddr->sun_path, addr->name, addr->len);
 
 		if (peer)
 			BPF_CGROUP_RUN_SA_PROG(sk, uaddr, &err,
@@ -2558,8 +2557,11 @@ static void unix_copy_addr(struct msghdr *msg, struct sock *sk)
 	struct unix_address *addr = smp_load_acquire(&unix_sk(sk)->addr);
 
 	if (addr) {
-		msg->msg_namelen = addr->len;
-		memcpy(msg->msg_name, addr->name, addr->len);
+		struct sockaddr_un *sunaddr = msg->msg_name;
+
+		msg->msg_namelen = offsetof(struct sockaddr_un, sun_path) + addr->len;
+		sunaddr->sun_family = AF_UNIX;
+		memcpy(sunaddr->sun_path, addr->name, addr->len);
 	}
 }
 
@@ -3581,17 +3583,15 @@ static int unix_seq_show(struct seq_file *seq, void *v)
 			seq_putc(seq, ' ');
 
 			i = 0;
-			len = u->addr->len -
-				offsetof(struct sockaddr_un, sun_path);
-			if (u->addr->name->sun_path[0]) {
+			len = u->addr->len;
+			if (u->addr->name[0]) {
 				len--;
 			} else {
 				seq_putc(seq, '@');
 				i++;
 			}
 			for ( ; i < len; i++)
-				seq_putc(seq, u->addr->name->sun_path[i] ?:
-					 '@');
+				seq_putc(seq, u->addr->name[i] ?: '@');
 		}
 		unix_state_unlock(s);
 		seq_putc(seq, '\n');

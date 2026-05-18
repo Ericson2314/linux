@@ -18,20 +18,19 @@
 #include "label.h"
 
 #define unix_addr(A) ((struct sockaddr_un *)(A))
-#define unix_addr_len(L) ((L) - sizeof(sa_family_t))
 #define unix_peer(sk) (unix_sk(sk)->peer)
 #define is_unix_addr_abstract_name(B) ((B)[0] == 0)
-#define is_unix_addr_anon(A, L) ((A) && unix_addr_len(L) <= 0)
+#define is_unix_addr_anon(A, L) ((A) && (L) <= 0)
 #define is_unix_addr_fs(A, L) (!is_unix_addr_anon(A, L) && \
-			    !is_unix_addr_abstract_name(unix_addr(A)->sun_path))
+			    !is_unix_addr_abstract_name(A))
 
 #define is_unix_anonymous(U) (!unix_sk(U)->addr)
 #define is_unix_fs(U) (!is_unix_anonymous(U) &&			\
-		       unix_sk(U)->addr->name->sun_path[0])
+		       unix_sk(U)->addr->name[0])
 #define is_unix_connected(S) ((S)->state == SS_CONNECTED)
 
 
-struct sockaddr_un *aa_sunaddr(const struct unix_sock *u, int *addrlen);
+const char *aa_unix_addr_name(const struct unix_sock *u, int *addrlen);
 int aa_unix_peer_perm(const struct cred *subj_cred,
 		      struct aa_label *label, const char *op, u32 request,
 		      struct sock *sk, struct sock *peer_sk,

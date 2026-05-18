@@ -21,9 +21,7 @@ static int sk_diag_dump_name(struct sock *sk, struct sk_buff *nlskb)
 	if (!addr)
 		return 0;
 
-	return nla_put(nlskb, UNIX_DIAG_NAME,
-		       addr->len - offsetof(struct sockaddr_un, sun_path),
-		       addr->name->sun_path);
+	return nla_put(nlskb, UNIX_DIAG_NAME, addr->len, addr->name);
 }
 
 static int sk_diag_dump_vfs(struct sock *sk, struct sk_buff *nlskb)

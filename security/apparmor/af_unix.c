@@ -67,12 +67,11 @@ static int unix_fs_perm(const char *op, u32 mask, const struct cred *subj_cred,
 #define FS_ADDR "/"			/* path addr in fs */
 
 static aa_state_t match_addr(struct aa_dfa *dfa, aa_state_t state,
-			     struct sockaddr_un *addr, int addrlen)
+			     const char *name, int name_len)
 {
-	if (addr)
+	if (name)
 		/* include leading \0 */
-		state = aa_dfa_match_len(dfa, state, addr->sun_path,
-					 unix_addr_len(addrlen));
+		state = aa_dfa_match_len(dfa, state, name, name_len);
 	else
 		state = aa_dfa_match_len(dfa, state, ANONYMOUS_ADDR, 1);
 	/* todo: could change to out of band for cleaner separation */
@@ -84,14 +83,14 @@ static aa_state_t match_addr(struct aa_dfa *dfa, aa_state_t state,
 static aa_state_t match_to_local(struct aa_policydb *policy,
 				 aa_state_t state, u32 request,
 				 int type, int protocol,
-				 struct sockaddr_un *addr, int addrlen,
+				 const char *name, int name_len,
 				 struct aa_perms **p,
 				 const char **info)
 {
 	state = aa_match_to_prot(policy, state, request, PF_UNIX, type,
 				 protocol, NULL, info);
 	if (state) {
-		state = match_addr(policy->dfa, state, addr, addrlen);
+		state = match_addr(policy->dfa, state, name, name_len);
 		if (state) {
 			/* todo: local label matching */
 			state = aa_dfa_null_transition(policy->dfa, state);
@@ -105,7 +104,7 @@ static aa_state_t match_to_local(struct aa_policydb *policy,
 	return state;
 }
 
-struct sockaddr_un *aa_sunaddr(const struct unix_sock *u, int *addrlen)
+const char *aa_unix_addr_name(const struct unix_sock *u, int *addrlen)
 {
 	struct unix_address *addr;
 
@@ -124,11 +123,11 @@ static aa_state_t match_to_sk(struct aa_policydb *policy,
 			      struct unix_sock *u, struct aa_perms **p,
 			      const char **info)
 {
-	int addrlen;
-	struct sockaddr_un *addr = aa_sunaddr(u, &addrlen);
+	int name_len;
+	const char *name = aa_unix_addr_name(u, &name_len);
 
 	return match_to_local(policy, state, request, u->sk.sk_type,
-			      u->sk.sk_protocol, addr, addrlen, p, info);
+			      u->sk.sk_protocol, name, name_len, p, info);
 }
 
 #define CMD_ADDR	1
@@ -154,7 +153,7 @@ static aa_state_t match_to_cmd(struct aa_policydb *policy, aa_state_t state,
 
 static aa_state_t match_to_peer(struct aa_policydb *policy, aa_state_t state,
 				u32 request, struct unix_sock *u,
-				struct sockaddr_un *peer_addr, int peer_addrlen,
+				const char *peer_addr, int peer_addrlen,
 				struct aa_perms **p, const char **info)
 {
 	AA_BUG(!p);
@@ -271,8 +270,7 @@ static int profile_bind_perm(struct aa_profile *profile, struct sock *sk,
 		/* bind for abstract socket */
 		state = match_to_local(rules->policy, state, AA_MAY_BIND,
 				       sk->sk_type, sk->sk_protocol,
-				       unix_addr(ad->net.addr),
-				       ad->net.addrlen,
+				       ad->net.addr, ad->net.addrlen,
 				       &p, &ad->info);
 
 		return aa_do_perms(profile, rules->policy, state, AA_MAY_BIND,
@@ -387,7 +385,7 @@ static int profile_opt_perm(struct aa_profile *profile, u32 request,
 /* null peer_label is allowed, in which case the peer_sk label is used */
 static int profile_peer_perm(struct aa_profile *profile, u32 request,
 			     struct sock *sk, const struct path *path,
-			     struct sockaddr_un *peer_addr,
+			     const char *peer_addr,
 			     int peer_addrlen, const struct path *peer_path,
 			     struct aa_label *peer_label,
 			     struct apparmor_audit_data *ad)
@@ -500,8 +498,8 @@ int aa_unix_bind_perm(struct socket *sock, struct sockaddr *addr,
 	if (!unconfined(label)) {
 		DEFINE_AUDIT_SK(ad, OP_BIND, current_cred(), sock->sk);
 
-		ad.net.addr = unix_addr(addr);
-		ad.net.addrlen = addrlen;
+		ad.net.addr = unix_addr(addr)->sun_path;
+		ad.net.addrlen = addrlen - offsetof(struct sockaddr_un, sun_path);
 
 		error = fn_for_each_confined(label, profile,
 				profile_bind_perm(profile, sock->sk, &ad));
@@ -600,7 +598,7 @@ int aa_unix_opt_perm(const char *op, u32 request, struct socket *sock,
 static int unix_peer_perm(const struct cred *subj_cred,
 			  struct aa_label *label, const char *op, u32 request,
 			  struct sock *sk, const struct path *path,
-			  struct sockaddr_un *peer_addr, int peer_addrlen,
+			  const char *peer_addr, int peer_addrlen,
 			  const struct path *peer_path, struct aa_label *peer_label)
 {
 	struct aa_profile *profile;
@@ -628,7 +626,7 @@ int aa_unix_peer_perm(const struct cred *subj_cred,
 	struct unix_sock *peeru = unix_sk(peer_sk);
 	struct unix_sock *u = unix_sk(sk);
 	int plen;
-	struct sockaddr_un *paddr = aa_sunaddr(unix_sk(peer_sk), &plen);
+	const char *paddr = aa_unix_addr_name(unix_sk(peer_sk), &plen);
 
 	AA_BUG(!label);
 	AA_BUG(!sk);
@@ -710,7 +708,7 @@ int aa_unix_file_perm(const struct cred *subj_cred, struct aa_label *label,
 		      const char *op, u32 request, struct file *file)
 {
 	struct socket *sock = (struct socket *) file->private_data;
-	struct sockaddr_un *addr, *peer_addr;
+	const char *addr, *peer_addr;
 	int addrlen, peer_addrlen;
 	struct aa_label *plabel = NULL;
 	struct sock *peer_sk = NULL;
@@ -734,7 +732,7 @@ int aa_unix_file_perm(const struct cred *subj_cred, struct aa_label *label,
 		sock_hold(peer_sk);
 
 	is_sk_fs = is_unix_fs(sock->sk);
-	addr = aa_sunaddr(unix_sk(sock->sk), &addrlen);
+	addr = aa_unix_addr_name(unix_sk(sock->sk), &addrlen);
 	path = unix_sk(sock->sk)->path;
 	unix_state_unlock(sock->sk);
 
@@ -748,7 +746,7 @@ int aa_unix_file_perm(const struct cred *subj_cred, struct aa_label *label,
 	if (!peer_sk)
 		goto out;
 
-	peer_addr = aa_sunaddr(unix_sk(peer_sk), &peer_addrlen);
+	peer_addr = aa_unix_addr_name(unix_sk(peer_sk), &peer_addrlen);
 
 	struct path peer_path;
 
