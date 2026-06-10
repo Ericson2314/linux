@@ -1998,10 +1998,14 @@ void __detach_mounts(struct dentry *dentry)
 
 /*
  * Is the caller allowed to modify his namespace?
+ *
+ * Tasks in a "null" mount namespace (nsproxy->mnt_ns == NULL) have no
+ * mount tree and may never modify mount state, no matter how privileged.
  */
 bool may_mount(void)
 {
-	return ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
+	return current->nsproxy->mnt_ns &&
+	       ns_capable(current->nsproxy->mnt_ns->user_ns, CAP_SYS_ADMIN);
 }
 
 static void warn_mandlock(void)
@@ -3214,7 +3218,8 @@ static struct file *vfs_open_tree(int dfd, const char __user *filename, unsigned
 	 * The new mount namespace will be owned by it.
 	 */
 	if ((flags & OPEN_TREE_NAMESPACE) &&
-	    !ns_capable(current_user_ns(), CAP_SYS_ADMIN))
+	    (!current->nsproxy->mnt_ns ||
+	     !ns_capable(current_user_ns(), CAP_SYS_ADMIN)))
 		return ERR_PTR(-EPERM);
 
 	if ((flags & OPEN_TREE_CLONE) && !may_mount())
@@ -4233,7 +4238,16 @@ struct mnt_namespace *copy_mnt_ns(u64 flags, struct mnt_namespace *ns,
 	struct mount *new;
 	int copy_flags;
 
-	BUG_ON(!ns);
+	if (unlikely(!ns)) {
+		/*
+		 * The caller has no mount namespace ("null" mount
+		 * namespace): plain forks inherit it, but there is
+		 * nothing a new namespace could be copied from.
+		 */
+		if (flags & CLONE_NEWNS)
+			return ERR_PTR(-EINVAL);
+		return NULL;
+	}
 
 	if (likely(!(flags & CLONE_NEWNS))) {
 		get_mnt_ns(ns);
@@ -4438,6 +4452,14 @@ SYSCALL_DEFINE3(fsmount, int, fs_fd, unsigned int, flags,
 
 	if ((flags & ~(FSMOUNT_CLOEXEC | FSMOUNT_NAMESPACE)) != 0)
 		return -EINVAL;
+
+	/*
+	 * Tasks without a mount namespace can't create mounts, not even
+	 * in a new mount namespace; the fscontext fd may have been
+	 * inherited from a more privileged ancestor.
+	 */
+	if (!current->nsproxy->mnt_ns)
+		return -EPERM;
 
 	if ((flags & FSMOUNT_NAMESPACE) &&
 	    !ns_capable(current_user_ns(), CAP_SYS_ADMIN))
@@ -4918,6 +4940,13 @@ static int do_mount_setattr(const struct path *path, struct mount_kattr *kattr)
 {
 	struct mount *mnt = real_mount(path->mnt);
 	int err = 0;
+
+	/*
+	 * Tasks without a mount namespace can't change mount properties,
+	 * not even on a detached tree inherited from an ancestor.
+	 */
+	if (!current->nsproxy->mnt_ns)
+		return -EPERM;
 
 	if (!path_mounted(path))
 		return -EINVAL;
@@ -5941,6 +5970,8 @@ static struct mnt_namespace *grab_requested_mnt_ns(const struct mnt_id_req *kreq
 		refcount_inc(&mnt_ns->passive);
 	} else {
 		mnt_ns = current->nsproxy->mnt_ns;
+		if (!mnt_ns)
+			return ERR_PTR(-ENOENT);
 		refcount_inc(&mnt_ns->passive);
 	}
 
@@ -6438,7 +6469,7 @@ static struct ns_common *mntns_get(struct task_struct *task)
 
 	task_lock(task);
 	nsproxy = task->nsproxy;
-	if (nsproxy) {
+	if (nsproxy && nsproxy->mnt_ns) {
 		ns = &nsproxy->mnt_ns->ns;
 		get_mnt_ns(to_mnt_ns(ns));
 	}
