@@ -576,6 +576,15 @@ SYSCALL_DEFINE1(fchdir, unsigned int, fd)
 	if (fd_empty(f))
 		return -EBADF;
 
+	/*
+	 * Tasks in a null mount namespace must stay without a cwd.
+	 * fchdir() is the only way to set one without resolving a
+	 * pathname (which would already have failed for lack of a root
+	 * and cwd), so refuse it explicitly.
+	 */
+	if (!current->nsproxy->mnt_ns)
+		return -EPERM;
+
 	if (!d_can_lookup(fd_file(f)->f_path.dentry))
 		return -ENOTDIR;
 
