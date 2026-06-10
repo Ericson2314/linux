@@ -125,7 +125,18 @@ int cap_capable(const struct cred *cred, struct user_namespace *target_ns,
 		int cap, unsigned int opts)
 {
 	const struct user_namespace *cred_ns = cred->user_ns;
-	int ret = cap_capable_helper(cred, target_ns, cred_ns, cap);
+	int ret;
+
+	/*
+	 * A task with no user namespace ("null" user namespace) holds no
+	 * capabilities anywhere: its credentials are not part of any
+	 * namespace hierarchy, so they can never match @target_ns or any
+	 * of its ancestors.
+	 */
+	if (unlikely(!cred_ns))
+		ret = -EPERM;
+	else
+		ret = cap_capable_helper(cred, target_ns, cred_ns, cap);
 
 	trace_cap_capable(cred, target_ns, cred_ns, cap, ret);
 	return ret;

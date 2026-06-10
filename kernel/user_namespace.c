@@ -88,6 +88,10 @@ int create_user_ns(struct cred *new)
 	struct ucounts *ucounts;
 	int ret, i;
 
+	/* A task with no user namespace cannot create one. */
+	if (unlikely(!parent_ns))
+		return -EPERM;
+
 	ret = -ENOSPC;
 	if (parent_ns->level > 32)
 		goto fail;
@@ -421,6 +425,9 @@ u32 map_id_up(struct uid_gid_map *map, u32 id)
  */
 kuid_t make_kuid(struct user_namespace *ns, uid_t uid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!ns))
+		return INVALID_UID;
 	/* Map the uid to a global kernel uid */
 	return KUIDT_INIT(map_id_down(&ns->uid_map, uid));
 }
@@ -440,6 +447,9 @@ EXPORT_SYMBOL(make_kuid);
  */
 uid_t from_kuid(struct user_namespace *targ, kuid_t kuid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!targ))
+		return (uid_t) -1;
 	/* Map the uid from a global kernel uid */
 	return map_id_up(&targ->uid_map, __kuid_val(kuid));
 }
@@ -489,6 +499,9 @@ EXPORT_SYMBOL(from_kuid_munged);
  */
 kgid_t make_kgid(struct user_namespace *ns, gid_t gid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!ns))
+		return INVALID_GID;
 	/* Map the gid to a global kernel gid */
 	return KGIDT_INIT(map_id_down(&ns->gid_map, gid));
 }
@@ -508,6 +521,9 @@ EXPORT_SYMBOL(make_kgid);
  */
 gid_t from_kgid(struct user_namespace *targ, kgid_t kgid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!targ))
+		return (gid_t) -1;
 	/* Map the gid from a global kernel gid */
 	return map_id_up(&targ->gid_map, __kgid_val(kgid));
 }
@@ -556,6 +572,9 @@ EXPORT_SYMBOL(from_kgid_munged);
  */
 kprojid_t make_kprojid(struct user_namespace *ns, projid_t projid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!ns))
+		return INVALID_PROJID;
 	/* Map the uid to a global kernel uid */
 	return KPROJIDT_INIT(map_id_down(&ns->projid_map, projid));
 }
@@ -575,6 +594,9 @@ EXPORT_SYMBOL(make_kprojid);
  */
 projid_t from_kprojid(struct user_namespace *targ, kprojid_t kprojid)
 {
+	/* A null user namespace maps nothing. */
+	if (unlikely(!targ))
+		return (projid_t) -1;
 	/* Map the uid from a global kernel uid */
 	return map_id_up(&targ->projid_map, __kprojid_val(kprojid));
 }

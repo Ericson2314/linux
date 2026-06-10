@@ -337,6 +337,16 @@ static bool cred_cap_issubset(const struct cred *set, const struct cred *subset)
 	if (set_ns == subset_ns)
 		return cap_issubset(subset->cap_permitted, set->cap_permitted);
 
+	/*
+	 * A null user namespace (no user namespace at all) holds no
+	 * capabilities and is not an ancestor of anything: its creds are
+	 * trivially a subset of any other, but nothing is a subset of it.
+	 */
+	if (unlikely(!subset_ns))
+		return true;
+	if (unlikely(!set_ns))
+		return false;
+
 	/* The credentials are in a different user namespaces
 	 * therefore one is a subset of the other only if a set is an
 	 * ancestor of subset and set->euid is owner of subset or one
