@@ -66,13 +66,31 @@ static vm_fault_t vvar_fault(const struct vm_special_mapping *sm,
 			     struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct page *page, *timens_page;
+	bool null_timens = false;
 
-	timens_page = find_timens_vvar_page(vma);
+#ifdef CONFIG_TIME_NS
+	/*
+	 * A task with no time namespace ("null" time namespace) must not see
+	 * the real timekeeping data page: it could parse it directly (with
+	 * rdtsc & co.) and reconstruct the time, bypassing the syscall guard.
+	 * Map an inert zero page at the data slot instead, so the vDSO finds
+	 * no usable clocksource and falls back to the (denied) clock_gettime()
+	 * syscall, and never map the real data page anywhere in its address
+	 * space.
+	 */
+	if (vma->vm_mm == current->mm && !current->nsproxy->time_ns)
+		null_timens = true;
+#endif
+	timens_page = null_timens ? NULL : find_timens_vvar_page(vma);
 
 	switch (vmf->pgoff) {
 	case VDSO_TIME_PAGE_OFFSET:
 		if (!IS_ENABLED(CONFIG_GENERIC_GETTIMEOFDAY))
 			return VM_FAULT_SIGBUS;
+		if (null_timens) {
+			page = ZERO_PAGE(0);
+			break;
+		}
 		page = virt_to_page(vdso_k_time_data);
 		if (timens_page) {
 			/*

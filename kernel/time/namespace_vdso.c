@@ -70,8 +70,12 @@ static void timens_setup_vdso_clock_data(struct vdso_clock *vc,
 
 struct page *find_timens_vvar_page(struct vm_area_struct *vma)
 {
-	if (likely(vma->vm_mm == current->mm))
+	if (likely(vma->vm_mm == current->mm)) {
+		/* A task with no time namespace has no per-namespace page. */
+		if (!current->nsproxy->time_ns)
+			return NULL;
 		return current->nsproxy->time_ns->vvar_page;
+	}
 
 	/*
 	 * VM_PFNMAP | VM_IO protect .fault() handler from being called
