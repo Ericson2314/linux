@@ -305,6 +305,8 @@ long ksys_msgget(key_t key, int msgflg)
 	struct ipc_params msg_params;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	msg_params.key = key;
 	msg_params.flg = msgflg;
@@ -604,6 +606,8 @@ static long ksys_msgctl(int msqid, int cmd, struct msqid_ds __user *buf, int ver
 		return -EINVAL;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	switch (cmd) {
 	case IPC_INFO:
@@ -736,6 +740,8 @@ static long compat_ksys_msgctl(int msqid, int cmd, void __user *uptr, int versio
 	struct msqid64_ds msqid64;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (msqid < 0 || cmd < 0)
 		return -EINVAL;
@@ -855,6 +861,8 @@ static long do_msgsnd(int msqid, long mtype, void __user *mtext,
 	DEFINE_WAKE_Q(wake_q);
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (msgsz > ns->msg_ctlmax || (long) msgsz < 0 || msqid < 0)
 		return -EINVAL;
@@ -1105,6 +1113,8 @@ static long do_msgrcv(int msqid, void __user *buf, size_t bufsz, long msgtyp, in
 	DEFINE_WAKE_Q(wake_q);
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (msqid < 0 || (long) bufsz < 0)
 		return -EINVAL;

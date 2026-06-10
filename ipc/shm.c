@@ -836,6 +836,8 @@ long ksys_shmget(key_t key, size_t size, int shmflg)
 	struct ipc_params shm_params;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	shm_params.key = key;
 	shm_params.flg = shmflg;
@@ -1249,6 +1251,8 @@ static long ksys_shmctl(int shmid, int cmd, struct shmid_ds __user *buf, int ver
 		return -EINVAL;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	switch (cmd) {
 	case IPC_INFO: {
@@ -1441,6 +1445,8 @@ static long compat_ksys_shmctl(int shmid, int cmd, void __user *uptr, int versio
 	int err;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (cmd < 0 || shmid < 0)
 		return -EINVAL;
@@ -1578,6 +1584,8 @@ long do_shmat(int shmid, char __user *shmaddr, int shmflg,
 	 * additional creator id...
 	 */
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 	rcu_read_lock();
 	shp = shm_obtain_object_check(ns, shmid);
 	if (IS_ERR(shp)) {

@@ -610,6 +610,8 @@ long ksys_semget(key_t key, int nsems, int semflg)
 	struct ipc_params sem_params;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (nsems < 0 || nsems > ns->sc_semmsl)
 		return -EINVAL;
@@ -1659,6 +1661,8 @@ static long ksys_semctl(int semid, int semnum, int cmd, unsigned long arg, int v
 		return -EINVAL;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	switch (cmd) {
 	case IPC_INFO:
@@ -1779,6 +1783,8 @@ static long compat_ksys_semctl(int semid, int semnum, int cmd, int arg, int vers
 	int err;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 
 	if (semid < 0)
 		return -EINVAL;
@@ -2228,6 +2234,8 @@ static long do_semtimedop(int semid, struct sembuf __user *tsops,
 	int ret;
 
 	ns = current->nsproxy->ipc_ns;
+	if (!ns)
+		return -ENOSYS;
 	if (nsops > ns->sc_semopm)
 		return -E2BIG;
 	if (nsops < 1)

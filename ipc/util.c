@@ -898,6 +898,10 @@ static int sysvipc_proc_open(struct inode *inode, struct file *file)
 {
 	struct ipc_proc_iter *iter;
 
+	/* A task with no IPC namespace has no /proc/sysvipc data. */
+	if (!current->nsproxy->ipc_ns)
+		return -ENOENT;
+
 	iter = __seq_open_private(file, &sysvipc_proc_seqops, sizeof(*iter));
 	if (!iter)
 		return -ENOMEM;

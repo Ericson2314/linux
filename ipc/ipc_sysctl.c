@@ -182,12 +182,21 @@ static const struct ctl_table ipc_sysctls[] = {
 
 static struct ctl_table_set *set_lookup(struct ctl_table_root *root)
 {
+	/*
+	 * A task with no IPC namespace has no per-namespace sysctls. Fall
+	 * back to the empty default set (its entries are hidden by
+	 * set_is_seen()); the sysctl core dereferences this result, so it
+	 * must not be NULL.
+	 */
+	if (!current->nsproxy->ipc_ns)
+		return &root->default_set;
 	return &current->nsproxy->ipc_ns->ipc_set;
 }
 
 static int set_is_seen(struct ctl_table_set *set)
 {
-	return &current->nsproxy->ipc_ns->ipc_set == set;
+	return current->nsproxy->ipc_ns &&
+	       &current->nsproxy->ipc_ns->ipc_set == set;
 }
 
 static void ipc_set_ownership(struct ctl_table_header *head,

@@ -449,6 +449,10 @@ static int mqueue_init_fs_context(struct fs_context *fc)
 {
 	struct mqueue_fs_context *ctx;
 
+	/* A task with no IPC namespace has no mqueue filesystem. */
+	if (!current->nsproxy->ipc_ns)
+		return -ENOENT;
+
 	ctx = kzalloc_obj(struct mqueue_fs_context);
 	if (!ctx)
 		return -ENOMEM;
@@ -911,8 +915,13 @@ static struct file *mqueue_file_open(struct filename *name,
 static int do_mq_open(const char __user *u_name, int oflag, umode_t mode,
 		      struct mq_attr *attr)
 {
-	struct vfsmount *mnt = current->nsproxy->ipc_ns->mq_mnt;
+	struct vfsmount *mnt;
 	int fd, ro;
+
+	/* A task with no IPC namespace has no POSIX message queues. */
+	if (!current->nsproxy->ipc_ns)
+		return -ENOSYS;
+	mnt = current->nsproxy->ipc_ns->mq_mnt;
 
 	audit_mq_open(oflag, mode, attr);
 
@@ -943,8 +952,13 @@ SYSCALL_DEFINE1(mq_unlink, const char __user *, u_name)
 	struct dentry *dentry;
 	struct inode *inode;
 	struct ipc_namespace *ipc_ns = current->nsproxy->ipc_ns;
-	struct vfsmount *mnt = ipc_ns->mq_mnt;
+	struct vfsmount *mnt;
 	CLASS(filename, name)(u_name);
+
+	/* A task with no IPC namespace has no POSIX message queues. */
+	if (!ipc_ns)
+		return -ENOSYS;
+	mnt = ipc_ns->mq_mnt;
 
 	if (IS_ERR(name))
 		return PTR_ERR(name);
