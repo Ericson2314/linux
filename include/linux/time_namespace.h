@@ -70,32 +70,43 @@ struct proc_timens_offset {
 int proc_timens_set_offset(struct file *file, struct task_struct *p,
 			   struct proc_timens_offset *offsets, int n);
 
+/*
+ * A task with no time namespace ("null" time namespace) applies no
+ * offset and sees host (init) time.  Reading a clock is blocked at the
+ * syscall layer, but relative waits and timeouts (nanosleep, futex,
+ * timerfd) still convert through these helpers and must keep working.
+ */
 static inline void timens_add_monotonic(struct timespec64 *ts)
 {
-	struct timens_offsets *ns_offsets = &current->nsproxy->time_ns->offsets;
+	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	*ts = timespec64_add(*ts, ns_offsets->monotonic);
+	if (ns)
+		*ts = timespec64_add(*ts, ns->offsets.monotonic);
 }
 
 static inline void timens_add_boottime(struct timespec64 *ts)
 {
-	struct timens_offsets *ns_offsets = &current->nsproxy->time_ns->offsets;
+	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	*ts = timespec64_add(*ts, ns_offsets->boottime);
+	if (ns)
+		*ts = timespec64_add(*ts, ns->offsets.boottime);
 }
 
 static inline u64 timens_add_boottime_ns(u64 nsec)
 {
-	struct timens_offsets *ns_offsets = &current->nsproxy->time_ns->offsets;
+	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	return nsec + timespec64_to_ns(&ns_offsets->boottime);
+	if (!ns)
+		return nsec;
+	return nsec + timespec64_to_ns(&ns->offsets.boottime);
 }
 
 static inline void timens_sub_boottime(struct timespec64 *ts)
 {
-	struct timens_offsets *ns_offsets = &current->nsproxy->time_ns->offsets;
+	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	*ts = timespec64_sub(*ts, ns_offsets->boottime);
+	if (ns)
+		*ts = timespec64_sub(*ts, ns->offsets.boottime);
 }
 
 ktime_t do_timens_ktime_to_host(clockid_t clockid, ktime_t tim,
@@ -105,7 +116,7 @@ static inline ktime_t timens_ktime_to_host(clockid_t clockid, ktime_t tim)
 {
 	struct time_namespace *ns = current->nsproxy->time_ns;
 
-	if (likely(ns == &init_time_ns))
+	if (likely(!ns || ns == &init_time_ns))
 		return tim;
 
 	return do_timens_ktime_to_host(clockid, tim, &ns->offsets);

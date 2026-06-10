@@ -1131,6 +1131,10 @@ SYSCALL_DEFINE2(clock_gettime, const clockid_t, which_clock,
 	struct timespec64 kernel_tp;
 	int error;
 
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
 	if (!kc)
 		return -EINVAL;
 
@@ -1145,6 +1149,10 @@ SYSCALL_DEFINE2(clock_gettime, const clockid_t, which_clock,
 int do_clock_adjtime(const clockid_t which_clock, struct __kernel_timex * ktx)
 {
 	const struct k_clock *kc = clockid_to_kclock(which_clock);
+
+	/* A task with no time namespace cannot read or adjust the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
 
 	if (!kc)
 		return -EINVAL;
@@ -1285,6 +1293,10 @@ SYSCALL_DEFINE2(clock_gettime32, clockid_t, which_clock,
 	const struct k_clock *kc = clockid_to_kclock(which_clock);
 	struct timespec64 ts;
 	int err;
+
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
 
 	if (!kc)
 		return -EINVAL;

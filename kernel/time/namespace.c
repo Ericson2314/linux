@@ -136,6 +136,10 @@ struct time_namespace *copy_time_ns(u64 flags,
 	if (!(flags & CLONE_NEWTIME))
 		return get_time_ns(old_ns);
 
+	/* Nothing to clone a new time namespace from. */
+	if (!old_ns)
+		return ERR_PTR(-EINVAL);
+
 	return clone_time_ns(user_ns, old_ns);
 }
 
@@ -163,6 +167,9 @@ static struct ns_common *timens_get(struct task_struct *task)
 		return NULL;
 
 	ns = nsproxy->time_ns;
+	/* A task with no time namespace has no /proc/PID/ns/time. */
+	if (!ns)
+		return NULL;
 	get_time_ns(ns);
 	return &ns->ns;
 }
@@ -178,6 +185,9 @@ static struct ns_common *timens_for_children_get(struct task_struct *task)
 		return NULL;
 
 	ns = nsproxy->time_ns_for_children;
+	/* A task with no time namespace has no /proc/PID/ns/time_for_children. */
+	if (!ns)
+		return NULL;
 	get_time_ns(ns);
 	return &ns->ns;
 }

@@ -38,6 +38,10 @@ SYSCALL_DEFINE2(clock_settime, const clockid_t, which_clock,
 
 static int do_clock_gettime(clockid_t which_clock, struct timespec64 *tp)
 {
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
 	switch (which_clock) {
 	case CLOCK_REALTIME:
 		ktime_get_real_ts64(tp);

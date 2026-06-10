@@ -38,6 +38,8 @@
 
 #include <linux/uaccess.h>
 #include <linux/compat.h>
+#include <linux/nsproxy.h>
+#include <linux/time_namespace.h>
 #include <asm/unistd.h>
 
 #include <generated/timeconst.h>
@@ -61,7 +63,13 @@ EXPORT_SYMBOL(sys_tz);
  */
 SYSCALL_DEFINE1(time, __kernel_old_time_t __user *, tloc)
 {
-	__kernel_old_time_t i = (__kernel_old_time_t)ktime_get_real_seconds();
+	__kernel_old_time_t i;
+
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
+	i = (__kernel_old_time_t)ktime_get_real_seconds();
 
 	if (tloc) {
 		if (put_user(i,tloc))
@@ -106,6 +114,10 @@ SYSCALL_DEFINE1(time32, old_time32_t __user *, tloc)
 {
 	old_time32_t i;
 
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
 	i = (old_time32_t)ktime_get_real_seconds();
 
 	if (tloc) {
@@ -140,6 +152,10 @@ SYSCALL_DEFINE1(stime32, old_time32_t __user *, tptr)
 SYSCALL_DEFINE2(gettimeofday, struct __kernel_old_timeval __user *, tv,
 		struct timezone __user *, tz)
 {
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
 	if (likely(tv != NULL)) {
 		struct timespec64 ts;
 
@@ -224,6 +240,10 @@ SYSCALL_DEFINE2(settimeofday, struct __kernel_old_timeval __user *, tv,
 COMPAT_SYSCALL_DEFINE2(gettimeofday, struct old_timeval32 __user *, tv,
 		       struct timezone __user *, tz)
 {
+	/* A task with no time namespace cannot read the clock. */
+	if (!current->nsproxy->time_ns)
+		return -ENOENT;
+
 	if (tv) {
 		struct timespec64 ts;
 
