@@ -81,7 +81,16 @@ struct uts_namespace *copy_utsname(u64 flags,
 {
 	struct uts_namespace *new_ns;
 
-	BUG_ON(!old_ns);
+	if (unlikely(!old_ns)) {
+		/*
+		 * No UTS namespace ("null" UTS namespace): a plain fork
+		 * inherits it, but a new namespace cannot be cloned from
+		 * nothing.
+		 */
+		if (flags & CLONE_NEWUTS)
+			return ERR_PTR(-EINVAL);
+		return NULL;
+	}
 	get_uts_ns(old_ns);
 
 	if (!(flags & CLONE_NEWUTS))

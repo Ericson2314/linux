@@ -1352,6 +1352,9 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
 
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
+
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
@@ -1376,6 +1379,9 @@ SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
 	if (!name)
 		return -EFAULT;
 
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
+
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
 	up_read(&uts_sem);
@@ -1395,6 +1401,9 @@ SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
 
 	if (!name)
 		return -EFAULT;
+
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
 
 	memset(&tmp, 0, sizeof(tmp));
 
@@ -1421,6 +1430,8 @@ SYSCALL_DEFINE2(sethostname, char __user *, name, int, len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
 	if (!ns_capable(current->nsproxy->uts_ns->user_ns, CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -1452,6 +1463,8 @@ SYSCALL_DEFINE2(gethostname, char __user *, name, int, len)
 
 	if (len < 0)
 		return -EINVAL;
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
 	down_read(&uts_sem);
 	u = utsname();
 	i = 1 + strlen(u->nodename);
@@ -1475,6 +1488,8 @@ SYSCALL_DEFINE2(setdomainname, char __user *, name, int, len)
 	int errno;
 	char tmp[__NEW_UTS_LEN];
 
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
 	if (!ns_capable(current->nsproxy->uts_ns->user_ns, CAP_SYS_ADMIN))
 		return -EPERM;
 	if (len < 0 || len > __NEW_UTS_LEN)

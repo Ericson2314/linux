@@ -37,6 +37,10 @@ static int proc_do_uts_string(const struct ctl_table *table, int write,
 	int r;
 	char tmp_data[__NEW_UTS_LEN + 1];
 
+	/* A task with no UTS namespace has no hostname/domainname etc. */
+	if (!current->nsproxy->uts_ns)
+		return -ENOENT;
+
 	memcpy(&uts_table, table, sizeof(uts_table));
 	uts_table.data = tmp_data;
 
