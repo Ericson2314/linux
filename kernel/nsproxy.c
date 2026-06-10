@@ -453,6 +453,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 	 */
 #ifdef CONFIG_USER_NS
 	if (flags & CLONE_NEWUSER) {
+		/* The target task may have no user namespace. */
+		if (!user_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &user_ns->ns);
 		if (ret)
 			goto out;
@@ -460,6 +465,15 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 #endif
 
 	if (flags & CLONE_NEWNS) {
+		/*
+		 * The target task may be in a null mount namespace
+		 * (no mount namespace at all); there is nothing to
+		 * join in that case.
+		 */
+		if (!nsp->mnt_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, from_mnt_ns(nsp->mnt_ns));
 		if (ret)
 			goto out;
@@ -467,6 +481,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 
 #ifdef CONFIG_UTS_NS
 	if (flags & CLONE_NEWUTS) {
+		/* The target task may have no UTS namespace. */
+		if (!nsp->uts_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &nsp->uts_ns->ns);
 		if (ret)
 			goto out;
@@ -475,6 +494,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 
 #ifdef CONFIG_IPC_NS
 	if (flags & CLONE_NEWIPC) {
+		/* The target task may have no IPC namespace. */
+		if (!nsp->ipc_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &nsp->ipc_ns->ns);
 		if (ret)
 			goto out;
@@ -491,6 +515,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 
 #ifdef CONFIG_CGROUPS
 	if (flags & CLONE_NEWCGROUP) {
+		/* The target task may have no cgroup namespace. */
+		if (!nsp->cgroup_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &nsp->cgroup_ns->ns);
 		if (ret)
 			goto out;
@@ -499,6 +528,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 
 #ifdef CONFIG_NET_NS
 	if (flags & CLONE_NEWNET) {
+		/* The target task may have no network namespace. */
+		if (!nsp->net_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &nsp->net_ns->ns);
 		if (ret)
 			goto out;
@@ -507,6 +541,11 @@ static int validate_nsset(struct nsset *nsset, struct pid *pid)
 
 #ifdef CONFIG_TIME_NS
 	if (flags & CLONE_NEWTIME) {
+		/* The target task may have no time namespace. */
+		if (!nsp->time_ns) {
+			ret = -EINVAL;
+			goto out;
+		}
 		ret = validate_ns(nsset, &nsp->time_ns->ns);
 		if (ret)
 			goto out;
