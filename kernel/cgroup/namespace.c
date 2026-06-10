@@ -53,12 +53,15 @@ struct cgroup_namespace *copy_cgroup_ns(u64 flags,
 	struct ucounts *ucounts;
 	struct css_set *cset;
 
-	BUG_ON(!old_ns);
-
 	if (!(flags & CLONE_NEWCGROUP)) {
+		/* A plain fork inherits the namespace, including a null one. */
 		get_cgroup_ns(old_ns);
 		return old_ns;
 	}
+
+	/* A null cgroup namespace cannot be unshared out of. */
+	if (!old_ns)
+		return ERR_PTR(-EINVAL);
 
 	/* Allow only sysadmin to create cgroup namespace. */
 	if (!ns_capable(user_ns, CAP_SYS_ADMIN))

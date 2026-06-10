@@ -419,6 +419,10 @@ int proc_cpuset_show(struct seq_file *m, struct pid_namespace *ns,
 	struct cgroup_subsys_state *css;
 	int retval;
 
+	/* A task with no cgroup namespace cannot scope a cgroup path. */
+	if (!current->nsproxy->cgroup_ns)
+		return -ENOENT;
+
 	retval = -ENOMEM;
 	buf = kmalloc(PATH_MAX, GFP_KERNEL);
 	if (!buf)

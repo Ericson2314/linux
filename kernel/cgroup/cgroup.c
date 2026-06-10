@@ -1425,6 +1425,11 @@ static inline struct cgroup *__cset_cgroup_from_root(struct css_set *cset,
 /*
  * look up cgroup associated with current task's cgroup namespace on the
  * specified hierarchy
+ *
+ * Precondition: current must be in a cgroup namespace, i.e.
+ * current->nsproxy->cgroup_ns != NULL. A task can have a "null" cgroup
+ * namespace; such a caller must handle that itself rather than calling
+ * here (see cgroup_show_path(), the sole caller).
  */
 static struct cgroup *
 current_cgns_cgroup_from_root(struct cgroup_root *root)
@@ -1433,6 +1438,7 @@ current_cgns_cgroup_from_root(struct cgroup_root *root)
 	struct css_set *cset;
 
 	lockdep_assert_held(&css_set_lock);
+	WARN_ON_ONCE(!current->nsproxy->cgroup_ns);
 
 	rcu_read_lock();
 
@@ -1464,7 +1470,7 @@ static struct cgroup *current_cgns_cgroup_dfl(void)
 {
 	struct css_set *cset;
 
-	if (current->nsproxy) {
+	if (current->nsproxy && current->nsproxy->cgroup_ns) {
 		cset = current->nsproxy->cgroup_ns->root_cset;
 		return __cset_cgroup_from_root(cset, &cgrp_dfl_root);
 	} else {
@@ -1919,7 +1925,11 @@ int cgroup_show_path(struct seq_file *sf, struct kernfs_node *kf_node,
 		return -ENOMEM;
 
 	spin_lock_irq(&css_set_lock);
-	ns_cgroup = current_cgns_cgroup_from_root(kf_cgroot);
+	if (current->nsproxy->cgroup_ns)
+		ns_cgroup = current_cgns_cgroup_from_root(kf_cgroot);
+	else
+		/* No cgroup namespace: unscoped, anchor at the hierarchy root. */
+		ns_cgroup = &kf_cgroot->cgrp;
 	len = kernfs_path_from_node(kf_node, ns_cgroup->kn, buf, PATH_MAX);
 	spin_unlock_irq(&css_set_lock);
 
@@ -2311,6 +2321,10 @@ static const struct fs_context_operations cgroup1_fs_context_ops = {
 static int cgroup_init_fs_context(struct fs_context *fc)
 {
 	struct cgroup_fs_context *ctx;
+
+	/* A task with no cgroup namespace cannot mount a cgroup hierarchy. */
+	if (!current->nsproxy->cgroup_ns)
+		return -ENOENT;
 
 	ctx = kzalloc_obj(struct cgroup_fs_context);
 	if (!ctx)
@@ -4222,6 +4236,10 @@ static int cgroup_file_open(struct kernfs_open_file *of)
 	struct cftype *cft = of_cft(of);
 	struct cgroup_file_ctx *ctx;
 	int ret;
+
+	/* A task with no cgroup namespace has no cgroup files. */
+	if (!current->nsproxy->cgroup_ns)
+		return -ENOENT;
 
 	ctx = kzalloc_obj(*ctx);
 	if (!ctx)
@@ -6581,6 +6599,10 @@ int proc_cgroup_show(struct seq_file *m, struct pid_namespace *ns,
 	int retval;
 	struct cgroup_root *root;
 
+	/* A task with no cgroup namespace cannot scope a cgroup path. */
+	if (!current->nsproxy->cgroup_ns)
+		return -ENOENT;
+
 	retval = -ENOMEM;
 	buf = kmalloc(PATH_MAX, GFP_KERNEL);
 	if (!buf)
@@ -6724,6 +6746,10 @@ static int cgroup_css_set_fork(struct kernel_clone_args *kargs)
 	struct cgroup *dst_cgrp = NULL;
 	struct css_set *cset;
 	struct super_block *sb;
+
+	/* A task with no cgroup namespace cannot spawn into a cgroup. */
+	if ((kargs->flags & CLONE_INTO_CGROUP) && !current->nsproxy->cgroup_ns)
+		return -ENOENT;
 
 	if (kargs->flags & CLONE_INTO_CGROUP)
 		cgroup_lock();
