@@ -184,7 +184,7 @@ error:
  */
 struct key *get_user_session_keyring_rcu(const struct cred *cred)
 {
-	struct key *reg_keyring = READ_ONCE(cred->user_ns->user_keyring_register);
+	struct key *reg_keyring;
 	key_ref_t session_keyring_r;
 	char buf[20];
 
@@ -198,6 +198,11 @@ struct key *get_user_session_keyring_rcu(const struct cred *cred)
 		.flags			= KEYRING_SEARCH_DO_STATE_CHECK,
 	};
 
+	/* A task with no user namespace has no user keyring register. */
+	if (!cred->user_ns)
+		return NULL;
+
+	reg_keyring = READ_ONCE(cred->user_ns->user_keyring_register);
 	if (!reg_keyring)
 		return NULL;
 
