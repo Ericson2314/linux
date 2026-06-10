@@ -2277,6 +2277,15 @@ __latent_entropy struct task_struct *copy_process(
 	stackleak_task_init(p);
 
 	if (pid != &init_struct_pid) {
+		/*
+		 * A task with no pid namespace for its children ("null" pid
+		 * namespace) cannot create children: there is nowhere to
+		 * allocate the child's pid.
+		 */
+		if (!p->nsproxy->pid_ns_for_children) {
+			retval = -EPERM;
+			goto bad_fork_cleanup_thread;
+		}
 		pid = alloc_pid(p->nsproxy->pid_ns_for_children, args->set_tid,
 				args->set_tid_size);
 		if (IS_ERR(pid)) {
