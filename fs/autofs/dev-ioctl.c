@@ -330,6 +330,14 @@ static int autofs_dev_ioctl_setpipefd(struct file *fp,
 	int err = 0;
 	struct pid *new_pid = NULL;
 
+	/*
+	 * The mount namespace of the new owner is recorded below; a task
+	 * in a null mount namespace (no mount namespace at all) cannot
+	 * take ownership.
+	 */
+	if (!current->nsproxy->mnt_ns)
+		return -EPERM;
+
 	if (param->setpipefd.pipefd == -1)
 		return -EINVAL;
 
