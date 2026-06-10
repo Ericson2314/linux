@@ -1719,6 +1719,13 @@ EXPORT_SYMBOL(__sock_create);
 
 int sock_create(int family, int type, int protocol, struct socket **res)
 {
+	/*
+	 * A task with no network namespace ("null" net namespace) cannot
+	 * create sockets; sockets it already holds keep working since they
+	 * pin their own namespace.
+	 */
+	if (!current->nsproxy->net_ns)
+		return -ENONET;
 	return __sock_create(current->nsproxy->net_ns, family, type, protocol, res, 0);
 }
 EXPORT_SYMBOL(sock_create);

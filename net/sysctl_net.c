@@ -30,12 +30,21 @@
 static struct ctl_table_set *
 net_ctl_header_lookup(struct ctl_table_root *root)
 {
+	/*
+	 * A task with no network namespace has no per-namespace sysctls.
+	 * Fall back to the empty default set (its entries are hidden by
+	 * is_seen()); the sysctl core dereferences this result, so it must
+	 * not be NULL.
+	 */
+	if (!current->nsproxy->net_ns)
+		return &root->default_set;
 	return &current->nsproxy->net_ns->sysctls;
 }
 
 static int is_seen(struct ctl_table_set *set)
 {
-	return &current->nsproxy->net_ns->sysctls == set;
+	return current->nsproxy->net_ns &&
+	       &current->nsproxy->net_ns->sysctls == set;
 }
 
 /* Return standard mode bits for table entry. */

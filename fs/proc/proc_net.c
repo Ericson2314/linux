@@ -96,6 +96,10 @@ int bpf_iter_init_seq_net(void *priv_data, struct bpf_iter_aux_info *aux)
 #ifdef CONFIG_NET_NS
 	struct seq_net_private *p = priv_data;
 
+	/* A task with no network namespace has nothing to iterate. */
+	if (!current->nsproxy->net_ns)
+		return -ENONET;
+
 	p->net = get_net_track(current->nsproxy->net_ns, &p->ns_tracker,
 			       GFP_KERNEL);
 #endif
