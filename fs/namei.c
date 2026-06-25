@@ -1565,6 +1565,13 @@ static int follow_automount(struct path *path, int *count, unsigned lookup_flags
 	if (lookup_flags & LOOKUP_NO_XDEV)
 		return -EXDEV;
 
+	/*
+	 * Tasks in a null mount namespace may not create mounts, and the
+	 * attach path (attach_recursive_mnt()) requires a mount namespace.
+	 */
+	if (unlikely(!current->nsproxy->mnt_ns))
+		return -EPERM;
+
 	if (count && (*count)++ >= MAXSYMLINKS)
 		return -ELOOP;
 

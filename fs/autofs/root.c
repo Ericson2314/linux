@@ -343,9 +343,11 @@ static struct vfsmount *autofs_d_automount(struct path *path)
 		return NULL;
 
 	/* Refuse to trigger mount if current namespace is not the owner
-	 * and the mount is propagation private.
+	 * and the mount is propagation private. A task in a null mount
+	 * namespace (no mount namespace at all) is never the owner.
 	 */
-	if (sbi->mnt_ns_id != to_ns_common(current->nsproxy->mnt_ns)->ns_id) {
+	if (!current->nsproxy->mnt_ns ||
+	    sbi->mnt_ns_id != to_ns_common(current->nsproxy->mnt_ns)->ns_id) {
 		if (vfsmount_to_propagation_flags(path->mnt) & MS_PRIVATE)
 			return ERR_PTR(-EPERM);
 	}
