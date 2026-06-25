@@ -1120,10 +1120,16 @@ static int set_root(struct nameidata *nd)
 		do {
 			seq = read_seqbegin(&fs->seq);
 			nd->root = fs->root;
+			/* Tasks in a null mount namespace have no root. */
+			if (unlikely(!nd->root.mnt))
+				return -ENOENT;
 			nd->root_seq = __read_seqcount_begin(&nd->root.dentry->d_seq);
 		} while (read_seqretry(&fs->seq, seq));
 	} else {
 		get_fs_root(fs, &nd->root);
+		/* Tasks in a null mount namespace have no root. */
+		if (unlikely(!nd->root.mnt))
+			return -ENOENT;
 		nd->state |= ND_ROOT_GRABBED;
 	}
 	return 0;
@@ -2732,11 +2738,17 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 			do {
 				seq = read_seqbegin(&fs->seq);
 				nd->path = fs->pwd;
+				/* Tasks in a null mount namespace have no cwd. */
+				if (unlikely(!nd->path.mnt))
+					return ERR_PTR(-ENOENT);
 				nd->inode = nd->path.dentry->d_inode;
 				nd->seq = __read_seqcount_begin(&nd->path.dentry->d_seq);
 			} while (read_seqretry(&fs->seq, seq));
 		} else {
 			get_fs_pwd(current->fs, &nd->path);
+			/* Tasks in a null mount namespace have no cwd. */
+			if (unlikely(!nd->path.mnt))
+				return ERR_PTR(-ENOENT);
 			nd->inode = nd->path.dentry->d_inode;
 		}
 	} else {
