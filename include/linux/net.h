@@ -125,7 +125,6 @@ enum sock_type {
 #ifndef SOCK_NONBLOCK
 #define SOCK_NONBLOCK	O_NONBLOCK
 #endif
-#define SOCK_COREDUMP	O_NOCTTY
 
 /**
  * enum sock_shutdown_cmd - Shutdown types

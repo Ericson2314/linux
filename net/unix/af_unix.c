@@ -1225,24 +1225,13 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 
 	unix_mkname_bsd(sunaddr, addr_len);
 
-	if (flags & SOCK_COREDUMP) {
-		scoped_with_init_fs() {
-			scoped_with_kernel_creds()
-				err = kern_path(sunaddr->sun_path,
-						LOOKUP_NO_SYMLINKS |
-						LOOKUP_NO_MAGICLINKS, &path);
-		}
-		if (err)
-			goto fail;
-	} else {
-		err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
-		if (err)
-			goto fail;
+	err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
+	if (err)
+		goto fail;
 
-		err = path_permission(&path, MAY_WRITE);
-		if (err)
-			goto path_put;
-	}
+	err = path_permission(&path, MAY_WRITE);
+	if (err)
+		goto path_put;
 
 	sk = unix_lookup_bsd_path(&path, type);
 	if (IS_ERR(sk)) {

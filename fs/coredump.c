@@ -14,6 +14,7 @@
 #include <linux/perf_event.h>
 #include <linux/highmem.h>
 #include <linux/spinlock.h>
+#include <linux/cred.h>
 #include <linux/key.h>
 #include <linux/personality.h>
 #include <linux/binfmts.h>
@@ -21,6 +22,7 @@
 #include <linux/sort.h>
 #include <linux/sched/coredump.h>
 #include <linux/sched/signal.h>
+#include <linux/sched/task.h>
 #include <linux/sched/task_stack.h>
 #include <linux/utsname.h>
 #include <linux/pid_namespace.h>
@@ -50,7 +52,6 @@
 #include <net/net_namespace.h>
 #include <net/sock.h>
 #include <uapi/linux/pidfd.h>
-#include <uapi/linux/un.h>
 #include <uapi/linux/coredump.h>
 
 #include <linux/uaccess.h>
@@ -668,17 +669,8 @@ static int umh_coredump_setup(struct subprocess_info *info, struct cred *new)
 static bool coredump_sock_connect(struct core_name *cn, struct coredump_params *cprm)
 {
 	struct file *file __free(fput) = NULL;
-	struct sockaddr_un addr = {
-		.sun_family = AF_UNIX,
-	};
-	ssize_t addr_len;
-	int retval;
 	struct socket *socket;
-
-	addr_len = strscpy(addr.sun_path, cn->corename);
-	if (addr_len < 0)
-		return false;
-	addr_len += offsetof(struct sockaddr_un, sun_path) + 1;
+	int retval;
 
 	/*
 	 * It is possible that the userspace process which is supposed
@@ -710,14 +702,26 @@ static bool coredump_sock_connect(struct core_name *cn, struct coredump_params *
 	 */
 	pidfs_coredump(cprm);
 
-	retval = kernel_connect(socket, (struct sockaddr_unsized *)(&addr), addr_len,
-				O_NONBLOCK | SOCK_COREDUMP);
-
+	/*
+	 * Connect to the AF_UNIX socket at the configured path, resolved
+	 * relative to init's root and under kernel credentials so the dumping
+	 * process cannot use its own filesystem view or privileges to redirect
+	 * its core to an arbitrary socket.  Symlinks and magic links are
+	 * forbidden for the same reason.
+	 */
+	scoped_with_init_fs() {
+		scoped_with_kernel_creds()
+			retval = kernel_unix_connect(AT_FDCWD, cn->corename,
+						     LOOKUP_NO_SYMLINKS |
+						     LOOKUP_NO_MAGICLINKS,
+						     socket, O_NONBLOCK,
+						     SOCK_STREAM);
+	}
 	if (retval) {
 		if (retval == -EAGAIN)
-			coredump_report_failure("Coredump socket %s receive queue full", addr.sun_path);
+			coredump_report_failure("Coredump socket %s receive queue full", cn->corename);
 		else
-			coredump_report_failure("Coredump socket connection %s failed %d", addr.sun_path, retval);
+			coredump_report_failure("Coredump socket connection %s failed %d", cn->corename, retval);
 		return false;
 	}
 
