@@ -1217,7 +1217,7 @@ static struct sock *unix_lookup_bsd_path(const struct path *path, int type)
 }
 
 static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
-				  int type, int flags)
+				  int type)
 {
 	struct path path;
 	struct sock *sk;
@@ -1239,7 +1239,7 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 		goto path_put;
 	}
 
-	err = security_unix_find(&path, sk, flags);
+	err = security_unix_find(&path, sk);
 	if (err)
 		goto sock_put;
 
@@ -1278,12 +1278,12 @@ static struct sock *unix_find_abstract(struct net *net,
 
 static struct sock *unix_find_other(struct net *net,
 				    struct sockaddr_un *sunaddr,
-				    int addr_len, int type, int flags)
+				    int addr_len, int type)
 {
 	struct sock *sk;
 
 	if (sunaddr->sun_path[0])
-		sk = unix_find_bsd(sunaddr, addr_len, type, flags);
+		sk = unix_find_bsd(sunaddr, addr_len, type);
 	else
 		sk = unix_find_abstract(net, sunaddr, addr_len, type);
 
@@ -1539,7 +1539,7 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr_unsized *addr
 		}
 
 restart:
-		other = unix_find_other(sock_net(sk), sunaddr, alen, sock->type, 0);
+		other = unix_find_other(sock_net(sk), sunaddr, alen, sock->type);
 		if (IS_ERR(other)) {
 			err = PTR_ERR(other);
 			goto out;
@@ -1878,7 +1878,7 @@ restart:
 	 * unix_stream_connect_commit() means "retry": the peer had died,
 	 * or its backlog was full and we slept -- so re-resolve the name.
 	 */
-	other = unix_find_other(net, sunaddr, addr_len, sk->sk_type, flags);
+	other = unix_find_other(net, sunaddr, addr_len, sk->sk_type);
 	if (IS_ERR(other)) {
 		err = PTR_ERR(other);
 		goto out_free;
@@ -2364,7 +2364,7 @@ static int unix_dgram_sendmsg(struct socket *sock, struct msghdr *msg,
 	if (msg->msg_namelen) {
 lookup:
 		other = unix_find_other(sock_net(sk), msg->msg_name,
-					msg->msg_namelen, sk->sk_type, 0);
+					msg->msg_namelen, sk->sk_type);
 		if (IS_ERR(other)) {
 			err = PTR_ERR(other);
 			goto out_free;

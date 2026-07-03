@@ -1641,8 +1641,7 @@ static void unmask_scoped_access(const struct landlock_ruleset *const client,
 	}
 }
 
-static int hook_unix_find(const struct path *const path, struct sock *other,
-			  int flags)
+static int hook_unix_find(const struct path *const path, struct sock *other)
 {
 	const struct landlock_ruleset *dom_other;
 	const struct landlock_cred_security *subject;
