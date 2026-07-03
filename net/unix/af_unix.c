@@ -1969,6 +1969,59 @@ restart:
 	return err;
 }
 
+/**
+ * kernel_unix_connect - connect a socket to a named AF_UNIX socket
+ * @dfd: directory file descriptor @path is resolved relative to, or AT_FDCWD
+ * @path: filesystem path of the socket to connect to
+ * @lookup_flags: LOOKUP_* flags for the path resolution; a kernel caller
+ *                connecting by name will typically pass
+ *                LOOKUP_NO_SYMLINKS | LOOKUP_NO_MAGICLINKS
+ * @sock: the connecting socket, created with sock_create_kern()
+ * @o_flags: connect flags; without O_NONBLOCK a full listen backlog on the
+ *           peer is waited on, as for connect(2)
+ * @type: required socket type (SOCK_STREAM/SOCK_SEQPACKET)
+ *
+ * Resolves @path (relative to @dfd) to the AF_UNIX socket bound there and
+ * connects @sock to it.  Performs no DAC or LSM check -- this is a trusted
+ * in-kernel primitive, not the connect(2) path.  The lookup and the connect
+ * both run in the caller's fs and credential context, so the caller controls
+ * the resolution root (e.g. scoped_with_init_fs()) and whose credentials the
+ * lookup and the SO_PASSCRED peer credentials use.
+ *
+ * Returns 0 on success or a negative errno.
+ */
+int kernel_unix_connect(int dfd, const char *path, unsigned int lookup_flags,
+			struct socket *sock, unsigned int o_flags, int type)
+{
+	struct path lookup_path;
+	struct sock *other;
+	int err;
+
+	if (dfd == AT_FDCWD) {
+		err = kern_path(path, lookup_flags, &lookup_path);
+	} else {
+		CLASS(fd, f)(dfd);
+
+		if (fd_empty(f))
+			return -EBADF;
+		err = vfs_path_lookup(fd_file(f)->f_path.dentry,
+				      fd_file(f)->f_path.mnt, path, lookup_flags,
+				      &lookup_path);
+	}
+	if (err)
+		return err;
+
+	other = unix_lookup_bsd_path(&lookup_path, type);
+	path_put(&lookup_path);
+	if (IS_ERR(other))
+		return PTR_ERR(other);
+
+	err = kernel_unix_connect_direct(other, sock, o_flags);
+	sock_put(other);
+	return err;
+}
+EXPORT_SYMBOL_GPL(kernel_unix_connect);
+
 static int unix_socketpair(struct socket *socka, struct socket *sockb)
 {
 	struct unix_peercred ska_peercred = {}, skb_peercred = {};

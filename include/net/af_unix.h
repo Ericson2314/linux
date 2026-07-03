@@ -14,6 +14,8 @@
 
 #if IS_ENABLED(CONFIG_UNIX)
 struct unix_sock *unix_get_socket(struct file *filp);
+int kernel_unix_connect(int dfd, const char *path, unsigned int lookup_flags,
+			struct socket *sock, unsigned int o_flags, int type);
 #else
 static inline struct unix_sock *unix_get_socket(struct file *filp)
 {
