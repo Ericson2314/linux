@@ -1228,29 +1228,13 @@ static struct sock *unix_find_bsd(struct sockaddr_un *sunaddr, int addr_len,
 
 	unix_mkname_bsd(sunaddr, addr_len);
 
-	if (flags & SOCK_COREDUMP) {
-		struct path root;
+	err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
+	if (err)
+		goto fail;
 
-		task_lock(&init_task);
-		get_fs_root(init_task.fs, &root);
-		task_unlock(&init_task);
-
-		scoped_with_kernel_creds()
-			err = vfs_path_lookup(root.dentry, root.mnt, sunaddr->sun_path,
-					      LOOKUP_BENEATH | LOOKUP_NO_SYMLINKS |
-					      LOOKUP_NO_MAGICLINKS, &path);
-		path_put(&root);
-		if (err)
-			goto fail;
-	} else {
-		err = kern_path(sunaddr->sun_path, LOOKUP_FOLLOW, &path);
-		if (err)
-			goto fail;
-
-		err = path_permission(&path, MAY_WRITE);
-		if (err)
-			goto path_put;
-	}
+	err = path_permission(&path, MAY_WRITE);
+	if (err)
+		goto path_put;
 
 	sk = unix_lookup_bsd_path(&path, type);
 	if (IS_ERR(sk)) {
